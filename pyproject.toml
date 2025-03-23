@@ -1,0 +1,35 @@
+[project]
+name = "sphero-vem"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "dv-bt",email = "d.bottone@pm.me"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "scikit-image (>=0.25.2,<0.26.0)",
+    "matplotlib (>=3.10.1,<4.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "sphero_vem", from = "src"}]
+
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.5"
+pytest-cov = "^6.0.0"
+black = "^25.1.0"
+flake8 = "^7.1.2"
+mypy = "^1.15.0"
+isort = "^6.0.1"
+
+
+[tool.poetry.group.notebook.dependencies]
+pandas = "^2.2.3"
+ipykernel = "^6.29.5"
+ipympl = "^0.9.7"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
