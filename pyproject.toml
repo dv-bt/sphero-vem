@@ -8,8 +8,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "scikit-image (>=0.25.2,<0.26.0)",
-    "matplotlib (>=3.10.1,<4.0.0)"
+    "torch (>=2.0.0,<2.7.0)",
+    "torchvision (>=0.15.0,<0.22.0)",
+    "careamics (>=0.0.9)"
 ]
 
 [tool.poetry]
