@@ -10,7 +10,9 @@ requires-python = ">=3.10"
 dependencies = [
     "torch (>=2.0.0,<2.7.0)",
     "torchvision (>=0.15.0,<0.22.0)",
-    "careamics (>=0.0.9)"
+    "careamics (>=0.0.9)",
+    "opencv-python (>=4.11.0.86,<5.0.0.0)",
+    "kornia (>=0.8.0,<0.9.0)",
 ]
 
 [tool.poetry]
