@@ -8,24 +8,12 @@ from torchvision.transforms.v2 import Resize
 import torch
 from tqdm import tqdm
 import numpy as np
+from sphero_vem.preprocessing import imread_downscaled
 
 
 DATA_DIR = Path("../data/raw")
 TARGET_DIR = Path("../data/processed")
 DOWNSCALE_FACTOR = 5
-
-
-def downscale_image(image_path: Path, factor: int) -> np.ndarray:
-    image = tifffile.imread(image_path)
-    image_tensor = torch.tensor(image).unsqueeze(0).unsqueeze(0)
-    image_resized = Resize(
-        (
-            image_tensor.shape[-1] // factor,
-            image_tensor.shape[-1] // factor,
-        ),
-        antialias=True,
-    )(image_tensor)
-    return image_resized[0, 0].numpy()
 
 
 def read_excluded_list():
@@ -45,7 +33,7 @@ if __name__ == "__main__":
             TARGET_DIR / image_path.parent.name
         ) / f"downscaled_{DOWNSCALE_FACTOR}"
         target_path.mkdir(parents=True, exist_ok=True)
-        image_ds = downscale_image(image_path, DOWNSCALE_FACTOR)
+        image_ds = imread_downscaled(image_path, DOWNSCALE_FACTOR)
         tifffile.imwrite(
             target_path / f"{image_path.stem}-ds_{DOWNSCALE_FACTOR}.tif", image_ds
         )

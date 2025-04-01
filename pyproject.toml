@@ -13,6 +13,8 @@ dependencies = [
     "careamics (>=0.0.9)",
     "opencv-python (>=4.11.0.86,<5.0.0.0)",
     "kornia (>=0.8.0,<0.9.0)",
+    "ome-types (>=0.6.0,<0.7.0)",
+    "h5py (>=3.13.0,<4.0.0)",
 ]
 
 [tool.poetry]
