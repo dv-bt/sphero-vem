@@ -155,3 +155,4 @@ cython_debug/
 
 # Data files
 data/
+scripts/benchmarks/assets

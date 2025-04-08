@@ -1,15 +1,20 @@
-import time
+from pathlib import Path
 import numpy as np
 import torch
 import cv2
 import imageio.v2 as imageio
 from PIL import Image
 import tifffile
+from benchmark_timing import timeit_decorator
 
 # ----------- Setup -----------
+n_iters = 10
 H, W = 10000, 10000
+assets_path = Path("assets")
+
 image_np = (np.random.rand(H, W) * 255).astype(np.uint8)
-tiff_path = "benchmark_img.tiff"
+assets_path.mkdir(exist_ok=True)
+tiff_path = assets_path / "benchmark_img.tiff"
 tifffile.imwrite(tiff_path, image_np)
 
 # Device detection and sync function
@@ -22,44 +27,28 @@ device = torch.device(
 )
 
 
-def sync_device():
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elif torch.backends.mps.is_available():
-        torch.mps.synchronize()
-
-
-# ----------- Timing Helper -----------
-def timeit(fn, n=10, sync=True):
-    start = time.time()
-    for _ in range(n):
-        fn()
-        if sync:
-            sync_device()
-    return (time.time() - start) / n
-
-
 # ----------- Read Benchmarks (with GPU transfer) -----------
 
 
+@timeit_decorator(n_iters)
 def read_cv2():
     img = cv2.imread(tiff_path, cv2.IMREAD_UNCHANGED)
     tensor = torch.from_numpy(img).to(device)
     return tensor
 
-
+@timeit_decorator(n_iters)
 def read_imageio():
     img = imageio.imread(tiff_path)
     tensor = torch.from_numpy(img).unsqueeze(0).to(device)
     return tensor
 
-
+@timeit_decorator(n_iters)
 def read_pil():
     img = np.array(Image.open(tiff_path))
     tensor = torch.from_numpy(img).unsqueeze(0).to(device)
     return tensor
 
-
+@timeit_decorator(n_iters)
 def read_tiff():
     img = tifffile.imread(tiff_path)
     tensor = torch.from_numpy(img).unsqueeze(0).to(device)
@@ -67,32 +56,44 @@ def read_tiff():
 
 
 # ----------- Write Benchmarks (CPU only) -----------
+@timeit_decorator(n_iters)
 def write_cv2():
-    return cv2.imwrite("out_cv2.png", image_np)
+    return cv2.imwrite(tiff_path, image_np)
 
 
+@timeit_decorator(n_iters)
 def write_imageio():
-    return imageio.imwrite("out_imageio.png", image_np)
+    return imageio.imwrite(tiff_path, image_np)
 
 
+@timeit_decorator(n_iters)
 def write_pil():
-    return Image.fromarray(image_np).save("out_pil.png")
+    return Image.fromarray(image_np).save(tiff_path)
 
 
+@timeit_decorator(n_iters)
 def write_tiff():
-    return tifffile.imwrite("out_tiff.tif", image_np)
+    return tifffile.imwrite(tiff_path, image_np)
 
 
 # ----------- Run Benchmarks -----------
 
-print(f"\n📥 Average READ times to GPU (10 runs) — device: {device}")
-print(f"[OpenCV]      {timeit(read_cv2):.5f} s")
-print(f"[imageio]     {timeit(read_imageio):.5f} s")
-print(f"[PIL]         {timeit(read_pil):.5f} s")
-print(f"[tifffile]    {timeit(read_tiff):.5f} s")
+print(f"\n📥 Average READ times to GPU ({n_iters} runs) — device: {device}")
+print("[OpenCV]")
+read_cv2()
+print("[imageio]")
+read_imageio()
+print("[PIL]")
+read_pil()
+print("[tifffile]")
+read_tiff()
 
-print("\n💾 Average WRITE times (10 runs)")
-print(f"[OpenCV]      {timeit(write_cv2, sync=False):.5f} s")
-print(f"[imageio]     {timeit(write_imageio, sync=False):.5f} s")
-print(f"[PIL]         {timeit(write_pil, sync=False):.5f} s")
-print(f"[tifffile]    {timeit(write_tiff, sync=False):.5f} s")
+print(f"\n💾 Average WRITE times ({n_iters} runs)")
+print("[OpenCV]")
+write_cv2()
+print("[imageio]")
+write_imageio()
+print("[PIL]")
+write_pil()
+print("[tifffile]")
+write_tiff()
