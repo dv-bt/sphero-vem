@@ -4,10 +4,7 @@ Downscale images by a specified integer factor.
 
 from pathlib import Path
 import tifffile
-from torchvision.transforms.v2 import Resize
-import torch
 from tqdm import tqdm
-import numpy as np
 from sphero_vem.preprocessing import imread_downscaled
 
 

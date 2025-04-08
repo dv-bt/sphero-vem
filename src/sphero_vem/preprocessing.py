@@ -13,6 +13,7 @@ import torchvision.transforms.v2 as transforms
 class Normalize(torch.nn.Module):
     """Class that normalizes an image with the give method. This is typically
     intended for use in torchvision transform pipelines"""
+
     def __init__(self, norm_method):
         super().__init__()
         if norm_method == "minmax":
@@ -33,7 +34,7 @@ class Normalize(torch.nn.Module):
         image_norm = (image - image.min()) / (image.max() - image.min())
         image_norm = image_norm.clamp(0, 1)
         return image_norm
-    
+
     def _zscore(self, image: tv_tensors.Image):
         """Normalizes an image using z-score normalization (standardization)"""
         image_norm = (image - image.mean()) / image.std()

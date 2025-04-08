@@ -21,19 +21,17 @@ dependencies = [
 packages = [{include = "sphero_vem", from = "src"}]
 
 
-[tool.poetry.group.test.dependencies]
-pytest = "^8.3.5"
-pytest-cov = "^6.0.0"
-black = "^25.1.0"
-flake8 = "^7.1.2"
-mypy = "^1.15.0"
-isort = "^6.0.1"
-
-
 [tool.poetry.group.notebook.dependencies]
 pandas = "^2.2.3"
 ipykernel = "^6.29.5"
 ipympl = "^0.9.7"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.5"
+pytest-cov = "^6.1.1"
+ruff = "^0.11.4"
+pre-commit = "^4.2.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

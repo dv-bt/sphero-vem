@@ -4,12 +4,10 @@ Using the non-local means denoising algorithm
 DOI:10.1109/CVPR.2005.38
 """
 
-
 from pathlib import Path
 import time
 import tifffile
 from tqdm import tqdm
-import numpy as np
 import cv2
 from skimage.restoration import denoise_nl_means
 
@@ -27,7 +25,7 @@ image_np = tifffile.imread(image_path)
 start = time.time()
 for _ in tqdm(range(5), "Denoising with scikit-image: "):
     out_skimage = denoise_nl_means(image_np)
-print(f"[skimage]  Time per call: {(time.time() - start)/10:.5f} s")
+print(f"[skimage]  Time per call: {(time.time() - start) / 10:.5f} s")
 
 # -------------------
 # OpenCV resize
@@ -35,4 +33,4 @@ print(f"[skimage]  Time per call: {(time.time() - start)/10:.5f} s")
 start = time.time()
 for _ in tqdm(range(5), "Denoising with open-cv: "):
     out_cv2 = cv2.fastNlMeansDenoising(image_np)
-print(f"[OpenCV]   Time per call: {(time.time() - start)/10:.5f} s")
+print(f"[OpenCV]   Time per call: {(time.time() - start) / 10:.5f} s")
