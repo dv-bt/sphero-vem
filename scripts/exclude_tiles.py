@@ -5,6 +5,8 @@ processed data folder.
 """
 
 from pathlib import Path
+import shutil
+
 
 # Define script parameters
 DATA_PATH = Path("../data/raw")
@@ -21,7 +23,7 @@ def generate_excluded_numbers(extrema_list: list) -> list:
     return [number for sublist in excluded for number in sublist]
 
 
-def generate_excluded_tiles():
+def generate_excluded_tiles() -> None:
     """Generate list of excluded tile names based on the DUPLICATE_MAP"""
     excluded_tiles = []
     for dataset, extrema_list in DUPLICATE_MAP.items():
@@ -32,22 +34,30 @@ def generate_excluded_tiles():
     return excluded_tiles
 
 
+def update_excluded_tiles_file(tile_path: Path) -> None:
+    """Update the file containing containing the list of excluded files or create it"""
+    excluded_dir = tile_path.parent / "excluded"
+    excluded_dir.mkdir(exist_ok=True)
+    excluded_file = excluded_dir / "excluded_tiles.txt"
+
+    if not excluded_file.exists():
+        excluded_file.touch()
+        existing_content = []
+    else:
+        existing_content = excluded_file.read_text().splitlines()
+
+    if tile_path.name not in existing_content:
+        with open(excluded_file, "a") as file:
+            file.write(f"{tile_path.name}\n")
+
+
 def main():
     excluded_tiles = generate_excluded_tiles()
     for tile_path in sorted(DATA_PATH.rglob("*/*.tif")):
         tile_name = tile_path.name
-        if tile_name in excluded_tiles:
-            excluded_file = tile_path.parent / "excluded_tiles.txt"
-
-            if not excluded_file.exists():
-                excluded_file.touch()
-                existing_content = []
-            else:
-                existing_content = excluded_file.read_text().splitlines()
-
-            if tile_name not in existing_content:
-                with open(excluded_file, "a") as file:
-                    file.write(f"{tile_name}\n")
+        if (tile_name in excluded_tiles) and ("excluded" not in tile_path.parent.name):
+            update_excluded_tiles_file(tile_path)
+            shutil.move(tile_path, tile_path.parent / "excluded" / tile_path.name)
 
 
 if __name__ == "__main__":
