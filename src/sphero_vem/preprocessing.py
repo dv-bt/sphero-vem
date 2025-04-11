@@ -2,6 +2,7 @@
 Functions for preprocessing images.
 """
 
+from typing import Literal
 import numpy as np
 import torch
 from pathlib import Path
@@ -14,7 +15,7 @@ class Normalize(torch.nn.Module):
     """Class that normalizes an image with the give method. This is typically
     intended for use in torchvision transform pipelines"""
 
-    def __init__(self, norm_method):
+    def __init__(self, norm_method: Literal["minmax", "zscore"] | None):
         super().__init__()
         if norm_method == "minmax":
             self.norm_fun = self._minmax
@@ -26,7 +27,7 @@ class Normalize(torch.nn.Module):
             raise ValueError("Invalid argument for norm_method")
 
     def forward(self, image: tv_tensors.Image):
-        image_norm = self.norm_fun(image)
+        image_norm = tv_tensors.wrap(self.norm_fun(image), like=image)
         return image_norm
 
     def _minmax(self, image: tv_tensors.Image):
