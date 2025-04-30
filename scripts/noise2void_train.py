@@ -15,9 +15,9 @@ config = create_n2v_configuration(
     experiment_name="n2v_2D",
     data_type="tiff",
     axes="YX",
-    patch_size=[128, 128],
-    batch_size=32,
-    num_epochs=20,
+    patch_size=[64, 64],
+    batch_size=128,
+    num_epochs=80,
     logger="tensorboard",
 )
 
