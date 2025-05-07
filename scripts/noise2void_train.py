@@ -15,20 +15,21 @@ VAL_SPLIT = 0.2
 
 # Hyperparameters
 BATCH_SIZE = 128
-PATCH_SIZE = 128
+PATCH_SIZE = 64
 EPOCHS = 100
-UNET_DEPTH = 3
-N2V2 = True
+UNET_DEPTH = 2
+UNET_NUM_CHANNELS_INIT = 32
+N2V2 = False
 
 # Dataloader parameters
-NUM_WORKERS = 8
+NUM_WORKERS = 16
 
 # Experiment
-EXP_NAME = f"n2v-depth{UNET_DEPTH}-patch{PATCH_SIZE}-nimages{NUM_IMAGES}{'-n2v2' if N2V2 else ''}"
+EXP_NAME = f"n2v-depth{UNET_DEPTH}-patch{PATCH_SIZE}-channels{UNET_NUM_CHANNELS_INIT}-nimages{NUM_IMAGES}{'-n2v2' if N2V2 else ''}"
 WORK_DIR = Path("data/models/n2v") / EXP_NAME
 
 
-def configure_n2v(train_path) -> CAREamist:
+def configure_n2v() -> CAREamist:
     """Create careamist object"""
 
     WORK_DIR.mkdir(exist_ok=True, parents=True)
@@ -44,6 +45,7 @@ def configure_n2v(train_path) -> CAREamist:
         logger="wandb",
         model_params={
             "depth": UNET_DEPTH,
+            "num_channels_init": UNET_NUM_CHANNELS_INIT,
         },
         train_dataloader_params={"num_workers": NUM_WORKERS},
         val_dataloader_params={"num_workers": NUM_WORKERS},
@@ -78,7 +80,7 @@ def prepare_dataset(data_path: Path, num_images: int, train_dir_name: str) -> Pa
 
 def train_n2v():
     train_path = prepare_dataset(DATA_PATH, NUM_IMAGES, TRAIN_DIR_NAME)
-    careamist = configure_n2v(train_path)
+    careamist = configure_n2v()
     careamist.train(
         train_source=train_path, use_in_memory=False, val_percentage=VAL_SPLIT
     )
