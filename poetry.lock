@@ -880,6 +880,20 @@ files = [
 six = ">=1.4.0"
 
 [[package]]
+name = "dotenv"
+version = "0.9.9"
+description = "Deprecated package"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "dotenv-0.9.9-py2.py3-none-any.whl", hash = "sha256:29cf74a087b31dafdb5a446b6d7e11cbce8ed2741540e2339c69fbef92c94ce9"},
+]
+
+[package.dependencies]
+python-dotenv = "*"
+
+[[package]]
 name = "email-validator"
 version = "2.2.0"
 description = "A robust email address syntax and deliverability validation library."
@@ -4947,4 +4961,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "1d0093a16ab7c96b544a3c963b025013d7d70dbdca758a2709c8b2bff5f1020c"
+content-hash = "e5696584a47e91d6839d24928d97dacb06e191e403db72903b3f15d7f0f489ef"
