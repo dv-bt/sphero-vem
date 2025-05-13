@@ -2,13 +2,34 @@
 This script renames tiles in the raw data folder to a consistent format.
 """
 
+import os
 from pathlib import Path
 import re
+from dotenv import load_dotenv
+import argparse
 
 # Define the path to the raw data folder
-DATA_PATH = Path("data/raw")
-DRY_RUN = True
-VERBOSE = True
+load_dotenv("../.env")
+DATA_ROOT = Path(os.environ.get("DATA_ROOT"))
+DATA_PATH = DATA_ROOT / "raw"
+
+# Set up command line arguments
+parser = argparse.ArgumentParser(
+    description="Rename tile files to a consistent format."
+)
+parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    dest="dry_run",
+    help="Only print what would be renamed without actually renaming files",
+)
+parser.add_argument(
+    "--verbose", action="store_true", dest="verbose", help="Enable verbose output"
+)
+args = parser.parse_args()
+
+DRY_RUN = args.dry_run
+VERBOSE = args.verbose
 
 
 def rename_tile(old_path: Path, verbose: bool = False, dry_run: bool = True) -> Path:
