@@ -17,6 +17,7 @@ dependencies = [
     "h5py (>=3.13.0,<4.0.0)",
     "lightning (>=2.5.1,<3.0.0)",
     "dotenv (>=0.9.9,<0.10.0)",
+    "cellpose (>=4.0.3,<5.0.0)",
 ]
 
 [tool.poetry]
