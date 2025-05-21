@@ -64,7 +64,7 @@ def main() -> None:
         image_raw = tifffile.imread(path_image_raw)
         image_denoised = predict_denoised(careamist, image_raw)
         # Save images
-        dir_denoised = DATA_ROOT / f"processed/denoised/{MODEL_NAME}"
+        dir_denoised = DATA_ROOT / f"processed/denoised/{DATASET}/{MODEL_NAME}"
         dir_denoised.mkdir(parents=True, exist_ok=True)
         path_denoised = dir_denoised / path_image_raw.name
         tifffile.imwrite(path_denoised, image_denoised)
