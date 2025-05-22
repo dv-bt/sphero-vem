@@ -36,6 +36,7 @@ pytest-cov = "^6.1.1"
 ruff = "^0.11.4"
 pre-commit = "^4.2.0"
 wandb = "^0.19.10"
+nbstripout = "^0.8.1"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
