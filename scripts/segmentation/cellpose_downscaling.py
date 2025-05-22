@@ -39,8 +39,8 @@ def main() -> None:
     factors = [1, 2, 4, 5, 8, 10, 16, 20, 32]
     timing_results = []
 
-    for dowscale_factor in factors:
-        image = imread_downscaled(image_path, dowscale_factor)
+    for downscale_factor in factors:
+        image = imread_downscaled(image_path, downscale_factor)
 
         cellpose_model = CellposeModel(gpu=True)
 
@@ -49,12 +49,12 @@ def main() -> None:
         elapsed_time = time.time() - start_time
 
         # Store downsample factor and corresponding time
-        timing_results.append((dowscale_factor, elapsed_time))
-        print(f"Downscale factor {dowscale_factor}: {elapsed_time:.2f} seconds")
+        timing_results.append((downscale_factor, elapsed_time))
+        print(f"Downscale factor {downscale_factor}: {elapsed_time:.2f} seconds")
 
-        imwrite(dir_output / f"{image_path.stem}-ds{dowscale_factor}.tif", image)
+        imwrite(dir_output / f"{image_path.stem}-ds{downscale_factor}.tif", image)
         imwrite(
-            dir_output / f"cellposeSAM-pretrained-mask-ds{dowscale_factor}.tif",
+            dir_output / f"cellposeSAM-pretrained-mask-ds{downscale_factor}.tif",
             output[0],
         )
 
