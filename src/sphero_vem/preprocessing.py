@@ -47,18 +47,49 @@ def downscale_image(
     factor: int,
     norm_method: str | None = None,
     out_type: torch.dtype = torch.float32,
+    scale_range: bool = True,
 ) -> tv_tensors.Image:
     """Downscale an image by a specified integer factor.
     The image can be a numpy array or a torch tensor.
     Transforms are run on the CPU. The tensor should be sent to device later
     """
+    if (not scale_range) and norm_method and (out_type != torch.float32):
+        print(
+            "WARNING: image range scaling is necessary during normalization if "
+            "data type is not torch.float32\n"
+            "scale_range set to True"
+        )
+        scale_range = True
+
     resize = transforms.Compose(
         [
             transforms.ToImage(),
-            transforms.ToDtype(torch.float32, scale=True),
+            transforms.ToDtype(torch.float32, scale=scale_range),
             transforms.Resize(image.shape[-1] // factor, antialias=True),
             Normalize(norm_method),
-            transforms.ToDtype(out_type, scale=True),
+            transforms.ToDtype(out_type, scale=scale_range),
+        ]
+    )
+    image_resized: tv_tensors.Image = resize(image)
+    return image_resized
+
+
+def downscale_labels(
+    image: np.ndarray | torch.Tensor,
+    factor: int,
+) -> tv_tensors.Image:
+    """Downscale a labels by a specified integer factor.
+    This is the equivalent of downscale_image but specific for segmentation labels
+    and masks
+    """
+
+    resize = transforms.Compose(
+        [
+            transforms.ToImage(),
+            transforms.Resize(
+                image.shape[-1] // factor,
+                interpolation=transforms.InterpolationMode.NEAREST,
+            ),
         ]
     )
     image_resized: tv_tensors.Image = resize(image)
@@ -66,10 +97,26 @@ def downscale_image(
 
 
 def imread_downscaled(
-    image_path: Path, factor: int, norm_method: str | None = None
+    image_path: Path,
+    factor: int,
+    norm_method: str | None = None,
+    scale_range: bool = True,
 ) -> np.ndarray:
     """Read and downscale an image. This is a convenience function that
     returns a downscaled image as unsigned 8-bit integer"""
     image = tifffile.imread(image_path)
-    image_resized = downscale_image(image, factor, norm_method, out_type=torch.uint8)
+    image_resized = downscale_image(
+        image, factor, norm_method, out_type=torch.uint8, scale_range=scale_range
+    )
     return image_resized.squeeze().numpy()
+
+
+def imread_labels_downscaled(
+    labels_path: Path,
+    factor: int,
+) -> np.ndarray:
+    """Read and downscale a segmentation mask. The mask will be returned
+    of the same type as the original one, which is typically int32"""
+    labels = tifffile.imread(labels_path)
+    labels_resized = downscale_labels(labels, factor)
+    return labels_resized.squeeze().numpy()
