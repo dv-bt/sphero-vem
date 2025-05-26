@@ -12,6 +12,7 @@ from cellpose.models import CellposeModel
 import numpy as np
 import tifffile
 import pandas as pd
+from tqdm import tqdm
 
 # Common variables
 load_dotenv(".env")
@@ -39,12 +40,19 @@ def imwrite(fname: Path, image: np.ndarray) -> None:
 def main() -> None:
     timing_results = []
 
-    for image_path in DIR_LABELED.glob("*.tif"):
-        mask_path = DIR_LABELED / f"labels/{image_path.stem}_{SEG_TARGET}.tif"
-        if not mask_path.exists():
-            continue
+    image_list = [
+        path
+        for path in DIR_LABELED.glob("*.tif")
+        if (DIR_LABELED / f"labels/{path.stem}-{SEG_TARGET}.tif").exists()
+    ]
 
-        for dowscale_factor in DOWNSCALE_FACTORS:
+    for image_path in tqdm(image_list, desc="Analyzing images", position=0):
+        for dowscale_factor in tqdm(
+            DOWNSCALE_FACTORS,
+            desc="Analyzing different scales",
+            position=1,
+            leave=False,
+        ):
             image = imread_downscaled(image_path, dowscale_factor)
 
             cellpose_model = CellposeModel(gpu=True)
@@ -55,7 +63,6 @@ def main() -> None:
 
             # Store downsample factor and corresponding time
             timing_results.append((dowscale_factor, elapsed_time))
-            print(f"Downscale factor {dowscale_factor}: {elapsed_time:.2f} seconds")
 
             imwrite(
                 DIR_OUTPUT
