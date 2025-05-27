@@ -19,6 +19,7 @@ dependencies = [
     "dotenv (>=0.9.9,<0.10.0)",
     "cellpose (>=4.0.3,<5.0.0)",
     "scikit-learn (>=1.6.1,<2.0.0)",
+    "xxhash (>=3.5.0,<4.0.0)",
 ]
 
 [tool.poetry]
