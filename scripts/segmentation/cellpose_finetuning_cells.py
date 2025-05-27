@@ -96,7 +96,7 @@ def get_file_info(filepath: Path, data_root: Path) -> dict:
     stat = os.stat(filepath)
 
     # Calculate hash for file integrity (optional but recommended)
-    hash_value = xxhash.xxh64(open("file.txt", "rb").read()).hexdigest()
+    hash_value = xxhash.xxh64(open(filepath, "rb").read()).hexdigest()
 
     return {
         "path": str(filepath.relative_to(data_root)),
