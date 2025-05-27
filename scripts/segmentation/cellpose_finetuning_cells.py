@@ -101,7 +101,7 @@ def get_file_info(filepath: Path, data_root: Path) -> dict:
     return {
         "path": str(filepath.relative_to(data_root)),
         "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        "md5_hash": hash_value,
+        "xxh64_hash": hash_value,
     }
 
 
