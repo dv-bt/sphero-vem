@@ -2,87 +2,40 @@
 Script to finetune cell segmentation using CellposeSAM on our dataset
 """
 
-import os
-import re
-from dataclasses import dataclass
-import argparse
-import logging
-import xxhash
-import json
-from datetime import datetime
-from pathlib import Path
-from sklearn.model_selection import train_test_split
-import wandb
-from sphero_vem.preprocessing import imread_downscaled, imread_labels_downscaled
 from dotenv import load_dotenv
-from cellpose import models, train, io
-import numpy as np
+import argparse
+from sphero_vem.segmentation import CellposeConfig, finetune_cellpose
 
 load_dotenv(".env")
 
 
-@dataclass
-class Config:
-    # Command line arguments with defaults for documentation
-    downscaling: int = 16
-    learning_rate: float = 5e-5
-    batch_size: int = 128
-    n_epochs: int = 100
-    test_size: float = 0.2
-
-    # Manual parameters (for now)
-    random_state: int = 42
-    seg_target: str = "cells"
-    dataset: str = "Au_01-vol_01/labeled-01"
-    wandb_project: str = "cell-segmentation"
-
-    # Parameters that are initialized by post_init
-    model_name: str = ""
-    data_root: Path = Path()
-    dir_labeled: Path = Path()
-    dir_experiment: Path = Path()
-    wandb_api_key: str = ""
-
-    def __post_init__(self):
-        """Load environment variables and init derived values"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        self.wandb_api_key = os.getenv("API_KEY")
-        self.data_root = Path(os.getenv("DATA_ROOT"))
-
-        self.model_name = (
-            f"cellposeSAM-{self.seg_target}-ds{self.downscaling}-{timestamp}"
-        )
-        self.dir_labeled = self.data_root / "processed/labeled" / self.dataset
-        self.dir_experiment = self.data_root / "models/cellpose" / self.model_name
-
-        # Create directories
-        self.dir_experiment.mkdir(parents=True, exist_ok=True)
-
-
-def parse_arguments() -> Config:
+def parse_arguments() -> CellposeConfig:
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--ds", type=int, default=Config.downscaling, help="Dowscaling")
+    parser.add_argument("--dataset", type=str, help="Dataset path")
     parser.add_argument(
-        "--lr", type=float, default=Config.learning_rate, help="Learning rate"
+        "--ds", type=int, default=CellposeConfig.downscaling, help="Dowscaling"
     )
     parser.add_argument(
-        "--batch-size", type=int, default=Config.batch_size, help="Batch size"
+        "--lr", type=float, default=CellposeConfig.learning_rate, help="Learning rate"
     )
     parser.add_argument(
-        "--epochs", type=int, default=Config.n_epochs, help="Number of epochs"
+        "--batch-size", type=int, default=CellposeConfig.batch_size, help="Batch size"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=CellposeConfig.n_epochs, help="Number of epochs"
     )
     parser.add_argument(
         "--test-size",
         type=float,
-        default=Config.test_size,
+        default=CellposeConfig.test_size,
         help="Test dataset fraction",
     )
 
     args = parser.parse_args()
 
-    return Config(
+    return CellposeConfig(
+        dir_labeled=args.dataset,
         downscaling=args.ds,
         learning_rate=args.lr,
         batch_size=args.batch_size,
@@ -91,192 +44,9 @@ def parse_arguments() -> Config:
     )
 
 
-def get_file_info(filepath: Path, data_root: Path) -> dict:
-    """Get file metadata without uploading the file"""
-    stat = os.stat(filepath)
-
-    # Calculate hash for file integrity (optional but recommended)
-    hash_value = xxhash.xxh64(open(filepath, "rb").read()).hexdigest()
-
-    return {
-        "path": str(filepath.relative_to(data_root)),
-        "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        "xxh64_hash": hash_value,
-    }
-
-
-def generate_manifest(
-    config: Config,
-    train_files: list[Path],
-    test_files: list[Path],
-):
-    """Generate training manifest"""
-    training_manifest = {
-        "experiment_id": config.model_name,
-        "timestamp": datetime.now().isoformat(),
-        "learning_rate": config.learning_rate,
-        "batch_size": config.batch_size,
-        "n_epochs": config.n_epochs,
-        "preprocessing_steps": [],
-        "train_files": [],
-        "test_files": [],
-    }
-
-    for filepath in train_files:
-        file_info = get_file_info(filepath, config.data_root)
-        training_manifest["train_files"].append(file_info)
-
-    for filepath in test_files:
-        file_info = get_file_info(filepath, config.data_root)
-        training_manifest["test_files"].append(file_info)
-
-    # For now keep it manual, consider automating step recognition.
-    preprocessing = [
-        {
-            "step": "downscaling",
-            "factor": config.downscaling,
-            "normalization": None,
-        }
-    ]
-
-    for preprocessing_step in preprocessing:
-        training_manifest["preprocessing_steps"].append(preprocessing_step)
-
-    # Save manifest locally and send to WandB
-    manifest_path = config.data_root / "training_manifest.json"
-    with open(manifest_path, "w") as f:
-        json.dump(training_manifest, f, indent=4)
-    wandb.save(manifest_path)
-
-
-class LogHandler(logging.Handler):
-    """Class that captures cellpose logger and sends info to WandB"""
-
-    def __init__(self):
-        super().__init__()
-
-    def emit(self, record):
-        message = record.getMessage()
-        pattern = r"(\d+), train_loss=([\d\.]+), test_loss=([\d\.]+), LR=([\d\.e\-\+]+)"
-        match = re.search(pattern, message)
-
-        if match:
-            epoch = int(match.group(1))
-            train_loss = float(match.group(2))
-            test_loss = float(match.group(3))
-            learning_rate = float(match.group(4))
-
-            wandb.log(
-                {
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    "test_loss": test_loss,
-                    "learning_rate": learning_rate,
-                }
-            )
-
-
-class Logging:
-    def __init__(self, config: Config) -> None:
-        # Activate Cellpose logging
-        io.logger_setup()
-        self._init_wandb(config)
-
-        # Add WandB handler to the cellpose logger
-        self.wandb_handler = LogHandler()
-        self.cellpose_logger = logging.getLogger("cellpose.train")
-        self.cellpose_logger.addHandler(self.wandb_handler)
-
-    def _init_wandb(self, config: Config) -> None:
-        """Initialize WandB logging"""
-        wandb.login(key=config.wandb_api_key)
-
-        wandb.init(
-            project=config.wandb_project,
-            name=config.model_name,
-            dir=config.dir_experiment,
-        )
-        wandb.config.update(
-            {
-                "learning_rate": config.learning_rate,
-                "batch_size": config.batch_size,
-                "downscaling": config.downscaling,
-                "n_epochs": config.n_epochs,
-            }
-        )
-
-    def stop(self) -> None:
-        """Stop logging and cleanup"""
-        self.cellpose_logger.removeHandler(self.wandb_handler)
-        wandb.finish()
-
-    def save_losses(self, train_losses: list[float], test_losses: list[float]) -> None:
-        """Log detailed epoch-by-epoch data"""
-        for epoch, (train_loss, test_loss) in enumerate(zip(train_losses, test_losses)):
-            wandb.log(
-                {
-                    "epoch": epoch,
-                    "train_loss_epoch": train_loss,
-                    "test_loss_epoch": test_loss if test_loss > 0 else np.nan,
-                }
-            )
-
-
-def split_dataset(config: Config) -> tuple[list[Path], list[Path]]:
-    """Split data into train and test datasets"""
-    image_list = [
-        path
-        for path in config.dir_labeled.glob("*.tif")
-        if (config.dir_labeled / f"labels/{path.stem}-{config.seg_target}.tif").exists()
-    ]
-    train_files, test_files = train_test_split(
-        image_list, test_size=config.test_size, random_state=config.random_state
-    )
-    return train_files, test_files
-
-
-def load_data(
-    config: Config, list_files: list[Path]
-) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Load images for training/testing as a list of arrays with corresponing labels"""
-    data = [imread_downscaled(path, config.downscaling) for path in list_files]
-    list_label_files = [
-        (config.dir_labeled / f"labels/{path.stem}-{config.seg_target}.tif")
-        for path in list_files
-    ]
-    labels = [
-        imread_labels_downscaled(path, config.downscaling) for path in list_label_files
-    ]
-    return data, labels
-
-
 def main():
     config = parse_arguments()
-    logger = Logging(config)
-
-    train_files, test_files = split_dataset(config)
-    generate_manifest(config, train_files, test_files)
-
-    cellpose_model = models.CellposeModel(gpu=True)
-
-    train_data, train_labels = load_data(config, train_files)
-    test_data, test_labels = load_data(config, test_files)
-
-    _, train_losses, test_losses = train.train_seg(
-        net=cellpose_model.net,
-        train_data=train_data,
-        train_labels=train_labels,
-        test_data=test_data,
-        test_labels=test_labels,
-        learning_rate=config.learning_rate,
-        batch_size=config.batch_size,
-        n_epochs=config.n_epochs,
-        model_name=config.model_name,
-        save_path=config.dir_experiment,
-    )
-
-    logger.save_losses(train_losses, test_losses)
-    logger.stop()
+    finetune_cellpose(config)
 
 
 if __name__ == "__main__":
