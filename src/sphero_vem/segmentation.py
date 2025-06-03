@@ -51,7 +51,7 @@ class CellposeConfig:
         self.model_name = (
             f"cellposeSAM-{self.seg_target}-ds{self.downscaling}-{timestamp}"
         )
-        self.dir_labeled = Path(self.dir_labeled).resolve(strict=True)
+        self.dir_labeled = self.data_root / self.dir_labeled
         self.dir_experiment = self.data_root / "models/cellpose" / self.model_name
         self.dir_experiment.mkdir(parents=True, exist_ok=True)
 
