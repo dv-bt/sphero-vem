@@ -1,5 +1,6 @@
 """
-Predict segmentation masks in batch on test data, used for checking finetuning performance
+Predict segmentation masks in batch on test data, used for checking finetuning performance.
+NOTE: prediction is done at the same downscale level as training.
 """
 
 import json
@@ -7,7 +8,8 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from cellpose.models import CellposeModel
-from tifffile import imread, imwrite
+from sphero_vem.preprocessing import imread_downscaled
+from tifffile import imwrite
 from tqdm import tqdm
 
 load_dotenv(".env")
@@ -31,6 +33,7 @@ def main():
         with open(model_dir / "training_manifest.json", "r") as f:
             json_dict = json.load(f)
             test_files = [DATA_ROOT / file["path"] for file in json_dict["test_files"]]
+        downscale_factor = json_dict["preprocessing_steps"][0]["factor"]
         dir_save = DIR_SEGMENTATION / model_dir.name
         dir_save.mkdir(parents=True, exist_ok=True)
         for image_path in tqdm(test_files, "Predicting masks", leave=False):
@@ -41,7 +44,7 @@ def main():
                         pretrained_model=model_path, gpu=True
                     )
                     model_is_loaded = True
-                image = imread(image_path)
+                image = imread_downscaled(image_path, downscale_factor)
                 output = cellpose_model.eval(image)
                 imwrite(
                     masks_path,
