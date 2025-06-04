@@ -100,7 +100,7 @@ def _generate_manifest(
         training_manifest["preprocessing_steps"].append(preprocessing_step)
 
     # Save manifest locally and send to WandB
-    manifest_path = config.data_root / "training_manifest.json"
+    manifest_path = config.dir_experiment / "training_manifest.json"
     with open(manifest_path, "w") as f:
         json.dump(training_manifest, f, indent=4)
     wandb.save(manifest_path)
