@@ -6,7 +6,7 @@ of image downscaling
 import os
 import time
 from pathlib import Path
-from sphero_vem.preprocessing import imread_downscaled
+from sphero_vem.io import imread_downscaled
 from dotenv import load_dotenv
 from cellpose.models import CellposeModel
 import numpy as np

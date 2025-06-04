@@ -1,6 +1,8 @@
 """
 Predict segmentation masks in batch on test data, used for checking finetuning performance.
-NOTE: prediction is done at the same downscale level as training.
+The main prediction is done at the same downscale level as training.
+The model is also run at original size and downscale factor 5 to check how robust it is
+against ROI size.
 """
 
 import json
@@ -8,14 +10,67 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from cellpose.models import CellposeModel
-from sphero_vem.preprocessing import imread_downscaled
-from tifffile import imwrite
+from sphero_vem.io import imread_downscaled, imwrite_labels
 from tqdm import tqdm
 
 load_dotenv(".env")
 DATA_ROOT = Path(os.getenv("DATA_ROOT"))
 SEG_TARGET = "cells"
 DIR_SEGMENTATION = DATA_ROOT / "processed/segmented/finetuning"
+DOWNSCALING_FACTORS = [1, 5]
+
+
+def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path]]:
+    """
+    Calculate target values for the prediction loop.
+
+    This function processes a training manifest JSON file to identify test files
+    and their corresponding downscale factors. It creates directories for saving
+    predicted masks at various resolutions and generates a list of targets for
+    the prediction pipeline.
+
+    Parameters
+    ----------
+    model_dir : Path
+        Directory containing the model and training manifest.json file
+
+    Returns
+    -------
+    list[tuple[int, Path, Path]]
+        A list of target tuples where each tuple contains:
+        - The downscaling factor (int)
+        - The input image path (Path)
+        - The output mask path (Path)
+    """
+    with open(model_dir / "training_manifest.json", "r") as f:
+        json_dict = json.load(f)
+    test_files: list[Path] = [
+        DATA_ROOT / file["path"] for file in json_dict["test_files"]
+    ]
+    downscale_factor_orig: int = json_dict["preprocessing_steps"][0]["factor"]
+
+    # Directory for saving masks at the same resolution of training images
+    dir_save = DIR_SEGMENTATION / model_dir.name
+    dir_save.mkdir(parents=True, exist_ok=True)
+
+    # Directories for saving masks predicted from images at different
+    # resolutions (higher)
+    dirs_res: list[Path] = [
+        dir_save / "other-resolutions" / f"downscaled-{factor}"
+        for factor in DOWNSCALING_FACTORS
+    ]
+    for dir in dirs_res:
+        dir.mkdir(exist_ok=True, parents=True)
+
+    # Prepare final file and downscaling list
+    dirs = [dir_save] + dirs_res
+    factors = [downscale_factor_orig] + DOWNSCALING_FACTORS
+    targets = [
+        (factor, file, dir / f"{file.stem}-{SEG_TARGET}.tif")
+        for factor, dir in zip(factors, dirs)
+        for file in test_files
+    ]
+    return targets
 
 
 def main():
@@ -25,35 +80,19 @@ def main():
         for dir in (DATA_ROOT / "models/cellpose").glob("*")
         if SEG_TARGET in dir.name
     ]
-    for model_dir in tqdm(
-        model_dirs, f"Evaluating models for {SEG_TARGET} segmentation"
-    ):
-        model_is_loaded = False
+
+    for model_dir in tqdm(model_dirs, "Evaluating models"):
         model_path = model_dir / "models" / model_dir.name
-        with open(model_dir / "training_manifest.json", "r") as f:
-            json_dict = json.load(f)
-            test_files = [DATA_ROOT / file["path"] for file in json_dict["test_files"]]
-        downscale_factor = json_dict["preprocessing_steps"][0]["factor"]
-        dir_save = DIR_SEGMENTATION / model_dir.name
-        dir_save.mkdir(parents=True, exist_ok=True)
-        for image_path in tqdm(test_files, "Predicting masks", leave=False):
-            masks_path = dir_save / f"{image_path.stem}-{SEG_TARGET}.tif"
+        cellpose_model = CellposeModel(True, model_path)
+        targets = compute_targets(model_dir)
+
+        for ds_factor, image_path, masks_path in tqdm(
+            targets, "Predicting masks", leave=False
+        ):
             if not masks_path.exists():
-                if not model_is_loaded:
-                    cellpose_model = CellposeModel(
-                        pretrained_model=model_path, gpu=True
-                    )
-                    model_is_loaded = True
-                image = imread_downscaled(image_path, downscale_factor)
+                image = imread_downscaled(image_path, ds_factor)
                 output = cellpose_model.eval(image)
-                imwrite(
-                    masks_path,
-                    output[0],
-                    compression="deflate",
-                    compressionargs={"level": 6},
-                    predictor=2,
-                    tile=(256, 256),
-                )
+                imwrite_labels(masks_path, output[0])
 
 
 if __name__ == "__main__":

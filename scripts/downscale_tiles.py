@@ -5,7 +5,7 @@ Downscale images by a specified integer factor.
 from pathlib import Path
 import tifffile
 from tqdm import tqdm
-from sphero_vem.preprocessing import imread_downscaled
+from sphero_vem.io import imread_downscaled
 
 
 DATA_DIR = Path("../data/raw")

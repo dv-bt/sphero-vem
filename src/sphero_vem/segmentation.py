@@ -15,7 +15,7 @@ import wandb
 from cellpose import models, train, io
 from tifffile import imwrite
 import numpy as np
-from sphero_vem.preprocessing import imread_downscaled, imread_labels_downscaled
+from sphero_vem.io import imread_downscaled, imread_labels_downscaled
 from sphero_vem.utils import get_file_info
 
 
