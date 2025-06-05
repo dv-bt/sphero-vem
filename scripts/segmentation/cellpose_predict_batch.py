@@ -18,7 +18,7 @@ load_dotenv(".env")
 DATA_ROOT = Path(os.getenv("DATA_ROOT"))
 SEG_TARGET = "cells"
 DIR_SEGMENTATION = DATA_ROOT / "processed/segmented/finetuning"
-DOWNSCALING_FACTORS = [1, 5]
+DOWNSCALING_FACTORS = [1, 5, 10]
 
 
 def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path]]:
