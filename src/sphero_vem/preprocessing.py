@@ -59,6 +59,9 @@ def downscale_image(
         )
         scale_range = True
 
+    # Enforce correct type for factor
+    factor = int(factor)
+
     resize = transforms.Compose(
         [
             transforms.ToImage(),
@@ -80,6 +83,9 @@ def downscale_labels(
     This is the equivalent of downscale_image but specific for segmentation labels
     and masks
     """
+
+    # Enforce correct type for factor
+    factor = int(factor)
 
     resize = transforms.Compose(
         [

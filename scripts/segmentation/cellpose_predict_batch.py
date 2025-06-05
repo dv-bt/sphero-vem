@@ -8,6 +8,7 @@ against ROI size.
 import json
 from pathlib import Path
 import os
+import shutil
 from dotenv import load_dotenv
 from cellpose.models import CellposeModel
 from sphero_vem.io import imread_downscaled, imwrite_labels
@@ -27,7 +28,8 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path]]:
     This function processes a training manifest JSON file to identify test files
     and their corresponding downscale factors. It creates directories for saving
     predicted masks at various resolutions and generates a list of targets for
-    the prediction pipeline.
+    the prediction pipeline. It also copies the training manifest in the new
+    predicted mask directory.
 
     Parameters
     ----------
@@ -42,7 +44,8 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path]]:
         - The input image path (Path)
         - The output mask path (Path)
     """
-    with open(model_dir / "training_manifest.json", "r") as f:
+    manifest_path = model_dir / "training_manifest.json"
+    with open(manifest_path, "r") as f:
         json_dict = json.load(f)
     test_files: list[Path] = [
         DATA_ROOT / file["path"] for file in json_dict["test_files"]
@@ -52,6 +55,7 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path]]:
     # Directory for saving masks at the same resolution of training images
     dir_save = DIR_SEGMENTATION / model_dir.name
     dir_save.mkdir(parents=True, exist_ok=True)
+    shutil.copy(manifest_path, dir_save / "training_manifest.json")
 
     # Directories for saving masks predicted from images at different
     # resolutions (higher)

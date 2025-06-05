@@ -30,6 +30,7 @@ packages = [{include = "sphero_vem", from = "src"}]
 pandas = "^2.2.3"
 ipykernel = "^6.29.5"
 ipympl = "^0.9.7"
+seaborn = "^0.13.2"
 
 
 [tool.poetry.group.dev.dependencies]
