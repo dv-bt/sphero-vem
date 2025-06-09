@@ -31,7 +31,6 @@ class CellposeConfig:
     test_size: float = 0.2
     random_state: int = 42
     seg_target: str = "cells"
-    wandb_project: str = "cell-segmentation"
     save_predictions: bool = True
 
     # Parameters that are initialized by post_init
@@ -45,6 +44,10 @@ class CellposeConfig:
         """Load environment variables and init derived values"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        if self.seg_target == "cells":
+            self.wandb_project = "cell-segmentation"
+        elif self.seg_target == "nuclei":
+            self.wandb_project = "nuclei-segmentation"
         self.wandb_api_key = os.getenv("API_KEY")
         self.data_root = Path(os.getenv("DATA_ROOT"))
 

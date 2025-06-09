@@ -1,5 +1,5 @@
 """
-Script to finetune cell segmentation using CellposeSAM on our dataset
+Script to finetune segmentation for cells or nuclei using CellposeSAM on our dataset
 """
 
 from dotenv import load_dotenv
@@ -31,6 +31,12 @@ def parse_arguments() -> CellposeConfig:
         default=CellposeConfig.test_size,
         help="Test dataset fraction",
     )
+    parser.add_argument(
+        "--seg-target",
+        type=str,
+        default=CellposeConfig.seg_target,
+        help="Segmentation target: 'cells' or 'nuclei'",
+    )
 
     args = parser.parse_args()
 
@@ -41,6 +47,7 @@ def parse_arguments() -> CellposeConfig:
         batch_size=args.batch_size,
         n_epochs=args.epochs,
         test_size=args.test_size,
+        seg_target=args.seg_target,
     )
 
 
