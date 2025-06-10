@@ -74,6 +74,7 @@ def _generate_manifest(
     training_manifest = {
         "experiment_id": config.model_name,
         "timestamp": datetime.now().isoformat(),
+        "segmentation_target": config.seg_target,
         "learning_rate": config.learning_rate,
         "batch_size": config.batch_size,
         "n_epochs": config.n_epochs,
