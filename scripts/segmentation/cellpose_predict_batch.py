@@ -125,19 +125,21 @@ def main():
         for ds_factor, image_path, gt_path, masks_path in tqdm(
             targets, "Predicting masks", leave=False
         ):
-            image = imread_downscaled(image_path, ds_factor)
-            ground_truth = imread_labels_downscaled(gt_path, ds_factor)
             if not masks_path.exists():
+                image = imread_downscaled(image_path, ds_factor)
+                ground_truth = imread_labels_downscaled(gt_path, ds_factor)
                 cellpose_model = load_cellpose_model(cellpose_model, model_path)
                 output = cellpose_model.eval(image)
                 imwrite_labels(masks_path, output[0])
-                predictions = output
-            else:
-                predictions = tifffile.imread(masks_path)
             results_path = masks_path.parent / f"{masks_path.stem}-ap.csv"
             if not masks_path.exists():
-                results = calculate_ap(ground_truth, predictions, 0.01)
-                results.to_csv(results_path, index=False)
+                ground_truth = imread_labels_downscaled(gt_path, ds_factor)
+                predictions = tifffile.imread(masks_path)
+                try:
+                    results = calculate_ap(ground_truth, predictions, 0.01)
+                    results.to_csv(results_path, index=False)
+                except ValueError:
+                    print(f"Error calculating AP for mask {masks_path}")
 
 
 if __name__ == "__main__":
