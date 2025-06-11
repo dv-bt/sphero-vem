@@ -12,9 +12,10 @@ from pathlib import Path
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import wandb
-from cellpose import models, train, io
+from cellpose import models, train, io, metrics
 from tifffile import imwrite
 import numpy as np
+import pandas as pd
 from sphero_vem.io import imread_downscaled, imread_labels_downscaled
 from sphero_vem.utils import get_file_info
 
@@ -296,3 +297,61 @@ def finetune_cellpose(config: CellposeConfig):
                 predictor=2,
                 tile=(256, 256),
             )
+
+
+def calculate_ap(
+    ground_truth: np.ndarray, predictions: np.ndarray, threshold_step: float = 0.05
+) -> pd.DataFrame:
+    """Calculate average precision and related metrics at different IoU thresholds.
+
+    This function evaluates segmentation predictions against ground truth by computing
+    the average precision, as well as counting the number of true positives, false
+    positives, and false negatives at different Jaccard index (IoU) thresholds.
+
+    Parameters
+    ----------
+    ground_truth : np.ndarray
+        Ground truth segmentation mask with instance labels.
+        Each object should have a unique integer ID > 0.
+    predictions : np.ndarray
+        Predicted segmentation mask with instance labels.
+        Each predicted object should have a unique integer ID > 0.
+    threshold_step : float, optional
+        Step size for IoU thresholds, defaults to 0.05.
+        Thresholds will be generated as [threshold_step, 2*threshold_step, ..., < 1.0]
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing evaluation metrics with columns:
+        - 'iou_thresholds': IoU threshold values
+        - 'average_precision': AP score at each threshold
+        - 'true_positives': Number of true positive detections
+        - 'false_positives': Number of false positive detections
+        - 'false_negatives': Number of false negative detections
+    """
+    thresholds = np.arange(threshold_step, 1.0, threshold_step).round(2)
+    metric = metrics.average_precision(ground_truth, predictions, threshold=thresholds)
+    results_df = pd.DataFrame((thresholds, *metric)).T
+    results_df.columns = [
+        "iou_thresholds",
+        "average_precision",
+        "true_positives",
+        "false_positives",
+        "false_negatives",
+    ]
+    return results_df
+
+
+def extract_seg_target(manifest: dict) -> str | None:
+    """Extract segmentation target from the training manifest"""
+    # Try direct key access
+    try:
+        return manifest["segmentation_target"]
+    # Fallback extraction from name
+    except KeyError:
+        match = re.search(r"cellposeSAM-(\w+)-", manifest["experiment_id"])
+        if match:
+            return match.group(1)
+
+    return None
