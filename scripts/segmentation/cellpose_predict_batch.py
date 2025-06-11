@@ -48,6 +48,10 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path, Path]] | Non
         - The output mask path (Path)
     """
     manifest_path = model_dir / "training_manifest.json"
+    if not manifest_path.exists():
+        print(f"Manifest for {model_dir.name} could not be found")
+        return
+
     with open(manifest_path, "r") as f:
         manifest = json.load(f)
     test_files: list[Path] = [
@@ -90,17 +94,33 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path, Path]] | Non
     return targets
 
 
+def load_cellpose_model(
+    cellpose_model: CellposeModel | None, model_path: Path
+) -> CellposeModel:
+    """Load cellpose model if not already loaded"""
+    if not cellpose_model:
+        return CellposeModel(True, model_path)
+    return cellpose_model
+
+
 def main():
     """Main execution loop"""
     model_dirs = [dir for dir in (DATA_ROOT / "models/cellpose").glob("*")]
 
     for model_dir in tqdm(model_dirs, "Evaluating models"):
         model_path = model_dir / "models" / model_dir.name
+        if not model_path.exists():
+            print(f"No model checkpoints found for {model_dir.name}")
+            print("Evaluation skipped")
+            continue
+
         targets = compute_targets(model_dir)
         if not targets:
             print("Evaluation skipped")
             continue
-        cellpose_model = CellposeModel(True, model_path)
+
+        # Initialize cellpose_model so it's only loaded when necessary
+        cellpose_model = None
 
         for ds_factor, image_path, gt_path, masks_path in tqdm(
             targets, "Predicting masks", leave=False
@@ -108,6 +128,7 @@ def main():
             image = imread_downscaled(image_path, ds_factor)
             ground_truth = imread_labels_downscaled(gt_path, ds_factor)
             if not masks_path.exists():
+                cellpose_model = load_cellpose_model(cellpose_model, model_path)
                 output = cellpose_model.eval(image)
                 imwrite_labels(masks_path, output[0])
                 predictions = output
