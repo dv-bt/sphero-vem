@@ -134,9 +134,10 @@ def main():
                 predictions = output
             else:
                 predictions = tifffile.imread(masks_path)
-            results = calculate_ap(ground_truth, predictions, 0.01)
             results_path = masks_path.parent / f"{masks_path.stem}-ap.csv"
-            results.to_csv(results_path, index=False)
+            if not masks_path.exists():
+                results = calculate_ap(ground_truth, predictions, 0.01)
+                results.to_csv(results_path, index=False)
 
 
 if __name__ == "__main__":
