@@ -59,7 +59,7 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path, Path]] | Non
         )
         return
     gt_files: list[Path] = [
-        file.parent / "labels" / (file.stem + f"-{seg_target}") for file in test_files
+        file.parent / "labels" / f"{file.stem}-{seg_target}.tif" for file in test_files
     ]
     downscale_factor_orig: int = manifest["preprocessing_steps"][0]["factor"]
 
