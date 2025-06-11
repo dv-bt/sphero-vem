@@ -14,6 +14,7 @@ from cellpose.models import CellposeModel
 from sphero_vem.segmentation import calculate_ap, extract_seg_target
 from sphero_vem.io import imread_downscaled, imwrite_labels, imread_labels_downscaled
 from tqdm import tqdm
+import tifffile
 
 
 load_dotenv(".env")
@@ -109,7 +110,10 @@ def main():
             if not masks_path.exists():
                 output = cellpose_model.eval(image)
                 imwrite_labels(masks_path, output[0])
-            results = calculate_ap(ground_truth, output, 0.01)
+                predictions = output
+            else:
+                predictions = tifffile.imread(masks_path)
+            results = calculate_ap(ground_truth, predictions, 0.01)
             results_path = masks_path.parent / f"{masks_path.stem}-ap.csv"
             results.to_csv(results_path, index=False)
 
