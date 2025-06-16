@@ -52,7 +52,7 @@ def main() -> None:
 
             for seg_tartet in SEG_TARGETS:
                 gt_path = (
-                    image_path.parent / "labels" / f"{image_path.name}-{seg_tartet}.tif"
+                    image_path.parent / "labels" / f"{image_path.stem}-{seg_tartet}.tif"
                 )
                 ground_truth = imread_labels_downscaled(gt_path, ds_factor)
                 results = calculate_ap(ground_truth, predictions, 0.01)
