@@ -4,7 +4,7 @@
 DS_FACTORS=(5 8 10 20)
 
 # Fixed parameters
-N_EPOCHS=201
+EPOCHS=201
 DATASET="processed/labeled/Au_01-vol_01/labeled-01"
 SEG_TARGET="nuclei"
 
