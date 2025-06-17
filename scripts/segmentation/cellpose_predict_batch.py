@@ -132,7 +132,7 @@ def main():
                 output = cellpose_model.eval(image)
                 imwrite(masks_path, output[0])
             results_path = masks_path.parent / f"{masks_path.stem}-ap.csv"
-            if not masks_path.exists():
+            if not results_path.exists():
                 ground_truth = imread_labels_downscaled(gt_path, ds_factor)
                 predictions = tifffile.imread(masks_path)
                 try:
