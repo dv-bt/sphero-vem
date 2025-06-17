@@ -13,7 +13,6 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import wandb
 from cellpose import models, train, io, metrics
-from tifffile import imwrite
 import numpy as np
 import pandas as pd
 from sphero_vem.io import imread_downscaled, imread_labels_downscaled
@@ -288,14 +287,10 @@ def finetune_cellpose(config: CellposeConfig):
     if config.save_predictions:
         for i, image in enumerate(test_data):
             masks = cellpose_model.eval(image)
-            imwrite(
+            io.imwrite(
                 config.dir_predictions
                 / f"{test_files[i].stem}-{config.seg_target}.tif",
                 masks[0],
-                compression="deflate",
-                compressionargs={"level": 6},
-                predictor=2,
-                tile=(256, 256),
             )
 
 
@@ -355,3 +350,20 @@ def extract_seg_target(manifest: dict) -> str | None:
             return match.group(1)
 
     return None
+
+
+def match_predictions(ground_truth: np.ndarray, predictions: np.ndarray) -> np.ndarray:
+    """Return prediction masks with matched label indices as ground truth"""
+    _, matched = metrics.mask_ious(ground_truth, predictions)
+    full_range = np.unique(predictions)[1:]
+    missing = np.setdiff1d(full_range, matched).tolist()
+    predictions_matched = predictions.copy()
+    for val in missing:
+        predictions_matched[predictions_matched == val] = 2 * predictions.max() + val
+
+    for i, val in enumerate(matched):
+        predictions_matched[predictions_matched == val] = predictions.max() + i + 1
+
+    predictions_matched[predictions_matched > 0] -= predictions.max()
+
+    return predictions_matched
