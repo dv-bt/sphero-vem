@@ -5,6 +5,7 @@ The model is also run at original size and downscale factor 5 to check how robus
 against ROI size.
 """
 
+import argparse
 import json
 from pathlib import Path
 import os
@@ -21,6 +22,23 @@ load_dotenv(".env")
 DATA_ROOT = Path(os.getenv("DATA_ROOT"))
 DIR_SEGMENTATION = DATA_ROOT / "processed/segmented/finetuning"
 DOWNSCALING_FACTORS = [1, 5, 10]
+
+
+def parse_args():
+    """Parse command-line arguments."""
+
+    parser = argparse.ArgumentParser(description="Predict segmentation masks in batch.")
+    parser.add_argument(
+        "--force-ap",
+        action="store_true",
+        help="Force recalculation of average precision",
+    )
+    parser.add_argument(
+        "--force-masks",
+        action="store_true",
+        help="Force recalculation of segmentation masks",
+    )
+    return parser.parse_args()
 
 
 def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path, Path]] | None:
@@ -63,9 +81,6 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path, Path]] | Non
             f"Segmentation target for {manifest['experiment_id']} could not be inferred"
         )
         return
-    gt_files: list[Path] = [
-        file.parent / "labels" / f"{file.stem}-{seg_target}.tif" for file in test_files
-    ]
     downscale_factor_orig: int = manifest["preprocessing_steps"][0]["factor"]
 
     # Directory for saving masks at the same resolution of training images
@@ -86,12 +101,19 @@ def compute_targets(model_dir: Path) -> list[tuple[int, Path, Path, Path]] | Non
     dirs = [dir_save] + dirs_res
     factors = [downscale_factor_orig] + DOWNSCALING_FACTORS
     targets = [
-        (factor, file, gt_file, dir / f"{file.stem}-{seg_target}.tif")
+        (factor, file, *_generate_paths(file, seg_target, dir))
         for factor, dir in zip(factors, dirs)
         for file in test_files
-        for gt_file in gt_files
     ]
     return targets
+
+
+def _generate_paths(file_path: Path, seg_target: str, masks_dir: Path) -> Path:
+    """Generate paths to ground truth and segmentation mask for a given
+    file and segmentation target. Segmentation masks uses masks_dir as root"""
+    gt_path = file_path.parent / "labels" / f"{file_path.stem}-{seg_target}.tif"
+    masks_path = masks_dir / f"{file_path.stem}-{seg_target}.tif"
+    return gt_path, masks_path
 
 
 def load_cellpose_model(
@@ -105,6 +127,7 @@ def load_cellpose_model(
 
 def main():
     """Main execution loop"""
+    args = parse_args()
     model_dirs = [dir for dir in (DATA_ROOT / "models/cellpose").glob("*")]
 
     for model_dir in tqdm(model_dirs, "Evaluating models"):
@@ -125,14 +148,14 @@ def main():
         for ds_factor, image_path, gt_path, masks_path in tqdm(
             targets, "Predicting masks", leave=False
         ):
-            if not masks_path.exists():
+            if not masks_path.exists() or args.force_masks:
                 image = imread_downscaled(image_path, ds_factor)
                 ground_truth = imread_labels_downscaled(gt_path, ds_factor)
                 cellpose_model = load_cellpose_model(cellpose_model, model_path)
                 output = cellpose_model.eval(image)
                 imwrite(masks_path, output[0])
             results_path = masks_path.parent / f"{masks_path.stem}-ap.csv"
-            if not results_path.exists():
+            if not results_path.exists() or args.force_ap:
                 ground_truth = imread_labels_downscaled(gt_path, ds_factor)
                 predictions = tifffile.imread(masks_path)
                 try:
