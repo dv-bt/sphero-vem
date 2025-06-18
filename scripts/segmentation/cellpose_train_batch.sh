@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Parameters to vary
-DS_FACTORS=(5 8 10 20)
+DS_FACTORS=(5 16)
 
 # Fixed parameters
-EPOCHS=201
+EPOCHS=101
 DATASET="processed/labeled/Au_01-vol_01/labeled-01"
 SEG_TARGET="nuclei"
 
