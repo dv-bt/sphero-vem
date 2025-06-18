@@ -15,7 +15,7 @@ import wandb
 from cellpose import models, train, io, metrics
 import numpy as np
 import pandas as pd
-from sphero_vem.io import imread_downscaled, imread_labels_downscaled
+from sphero_vem.io import imread_downscaled, imread_labels_downscaled, imwrite
 from sphero_vem.utils import get_file_info
 
 
@@ -287,7 +287,7 @@ def finetune_cellpose(config: CellposeConfig):
     if config.save_predictions:
         for i, image in enumerate(test_data):
             masks = cellpose_model.eval(image)
-            io.imwrite(
+            imwrite(
                 config.dir_predictions
                 / f"{test_files[i].stem}-{config.seg_target}.tif",
                 masks[0],
