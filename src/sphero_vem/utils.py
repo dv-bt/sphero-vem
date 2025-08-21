@@ -87,3 +87,13 @@ def get_file_info(filepath: Path, data_root: Path) -> dict:
         "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         "xxh64_hash": hash_value,
     }
+
+
+def read_section_errors(data_dir: Path) -> list[Path] | None:
+    """Read tiles with sectioning errors, returns None if there is no file specifying
+    them"""
+    try:
+        with open(data_dir / "folded_section_tiles.txt", "r") as f:
+            return [line.strip() for line in f]
+    except FileNotFoundError:
+        return

@@ -4342,6 +4342,31 @@ files = [
 ]
 
 [[package]]
+name = "simpleitk"
+version = "2.5.2"
+description = "SimpleITK is a simplified interface to the Insight Toolkit (ITK) for image registration and segmentation"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "simpleitk-2.5.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:ddfae02f6fc67829fcf13cffb22e8ff9d5cc79d6453d546c9937c1abafa7d257"},
+    {file = "simpleitk-2.5.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:76ec652d30762adfedb167fc8fe3918099f0b87397c7656a0bab1ba21cb2dfcd"},
+    {file = "simpleitk-2.5.2-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:99739c3238539ff5f342f5a5eec2960c778c122e56f893c3dbf889cacc500bd7"},
+    {file = "simpleitk-2.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:9e15f7daff43ff85268f4ef48e97dcb1fb4285608811cad36cec739407581104"},
+    {file = "simpleitk-2.5.2-cp310-cp310-win_amd64.whl", hash = "sha256:637d92aecc5e2de6b424ed8866ef0415dd71b6256cd12618be68f1b510c0a256"},
+    {file = "simpleitk-2.5.2-cp311-abi3-macosx_10_9_x86_64.whl", hash = "sha256:c0227e1365472dd2bd60ea265d016bb82c5b245ad6ab3fcf56ab9be052e3fd22"},
+    {file = "simpleitk-2.5.2-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:d91b602a13554ae0a1961076166bd0243c7a0ccbd9c1589ba5afbe8554409371"},
+    {file = "simpleitk-2.5.2-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ce7ef67d22f15632c7f2bbec9d5b40fb18889289df4d04337e2b4021e7e5b444"},
+    {file = "simpleitk-2.5.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4a673bdb4ccb7609905f4700fd242591c2273b2ba1604490d79d530661210942"},
+    {file = "simpleitk-2.5.2-cp311-abi3-win_amd64.whl", hash = "sha256:c3884c377c2c5053e15460c6f724a8efe71f4c4ff780418030711b1234114036"},
+    {file = "simpleitk-2.5.2-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:e29a6b3cb02b43358514c39578afe66f64f2cfe59adc983922a324f44b6c0a59"},
+    {file = "simpleitk-2.5.2-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:f477ada24a384775fdecc510238e5ca1e37897976fc5ae1f17f082ca654d5cfa"},
+    {file = "simpleitk-2.5.2-cp39-cp39-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:5411273aec1a9768ccb2ab396d20ca9bdb953603734f3cb62ade5e885eb75ec8"},
+    {file = "simpleitk-2.5.2-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:07686eb40cdc2febdb31bd8efba7655fd1ff4b7faa3b99569b43498f4ea9f5f9"},
+    {file = "simpleitk-2.5.2-cp39-cp39-win_amd64.whl", hash = "sha256:a1054627f92b2a23c788facc8d4bf47eea9bb5e5b92aed6d5b9fa6652a63e31e"},
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -5300,4 +5325,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "1ed8f8075faf5ab0bbe469a2f7c08c045e9747e47789d90b01f3a4f7343df7ac"
+content-hash = "9e3d4de8a4924fd6451c8e045c56a3dce217e932087ecba710d0ff170960185b"
