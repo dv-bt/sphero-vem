@@ -6,6 +6,7 @@ import os
 import datetime
 import argparse
 import yaml
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -78,7 +79,7 @@ def generate_manifest(
             },
             {
                 "step": "registration",
-                "transform": args.transform,
+                "transform": args.transform.value,
                 "shriking factors": args.shrink_factors,
                 "smoothing sigmas": args.smoothing_sigmas,
                 "metric sampling fractions": args.sampling_fractions,
@@ -110,12 +111,17 @@ def main():
 
         # Temporarily stop after a few images for testing
         images = images[:10]
+        shutil.copy(images[0], out_dir / images[0].name)
 
         for i in tqdm(range(len(images) - 1), "Aligning images"):
             register_to_disk(
                 out_dir / images[i].name,
                 images[i + 1],
                 out_dir / images[i + 1].name,
+                transform_type=args.transform,
+                shrink_factors=args.shrink_factors,
+                smoothing_sigmas=args.smoothing_sigmas,
+                sampling_fractions=args.sampling_fractions,
             )
 
 
