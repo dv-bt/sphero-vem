@@ -109,8 +109,6 @@ def main():
             images = [path for path in images if path.name not in error_tiles]
         generate_manifest(data_dir, out_dir, images, args, error_tiles)
 
-        # Temporarily stop after a few images for testing
-        images = images[:10]
         shutil.copy(images[0], out_dir / images[0].name)
 
         for i in tqdm(range(len(images) - 1), "Aligning images"):
