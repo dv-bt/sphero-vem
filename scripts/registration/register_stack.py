@@ -33,7 +33,7 @@ def parse_args():
         "--shrink_factors",
         type=int,
         nargs="+",
-        help="Shrinking factors used during multiresolution registration. The number"
+        help="shrink factors used during multiresolution registration. The number"
         "of parameters should match those of smoothing sigmas and sampling fractions",
     )
     parser.add_argument(
@@ -42,7 +42,7 @@ def parse_args():
         type=float,
         nargs="+",
         help="Smoothing sigmas used during multiresolution registration. The number"
-        "of parameters should match those of shrinking factors and sampling fractions",
+        "of parameters should match those of shrink factors and sampling fractions",
     )
     parser.add_argument(
         "-sa",
@@ -50,7 +50,7 @@ def parse_args():
         type=float,
         nargs="+",
         help="Sampling fractions used during multiresolution registration. The number"
-        "of parameters should match those of shrinking factors and smoothing sigmas",
+        "of parameters should match those of shrink factors and smoothing sigmas",
     )
 
     args = parser.parse_args()
@@ -79,7 +79,7 @@ def generate_manifest(
             {
                 "step": "registration",
                 "transform": args.transform,
-                "shriking factors": args.shrinking_factors,
+                "shriking factors": args.shrink_factors,
                 "smoothing sigmas": args.smoothing_sigmas,
                 "metric sampling fractions": args.sampling_fractions,
             },
