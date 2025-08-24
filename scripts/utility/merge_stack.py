@@ -6,7 +6,7 @@ import argparse
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from sphero_vem.io import make_stack
+from sphero_vem.io import write_stack
 
 load_dotenv(".env")
 DATA_ROOT = Path(os.environ.get("DATA_ROOT"))
@@ -42,7 +42,7 @@ def main():
     out_dir = args.source / "stacked"
     out_dir.mkdir(exist_ok=True)
     out_file = out_dir / f"{dataset}-stacked.tif"
-    make_stack(args.source, out_file)
+    write_stack(args.source, out_file)
 
 
 if __name__ == "__main__":

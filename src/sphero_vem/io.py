@@ -50,7 +50,7 @@ def imread_labels_downscaled(
     return labels_resized.squeeze().numpy()
 
 
-def make_stack(data_dir: Path, out_file: Path) -> None:
+def write_stack(data_dir: Path, out_file: Path) -> None:
     """Merge images in a folder into a single ZYX tif"""
 
     image_list = sorted(list(data_dir.glob("*.tif")))
@@ -58,3 +58,17 @@ def make_stack(data_dir: Path, out_file: Path) -> None:
         for file_path in tqdm(image_list, desc="Writing slices"):
             slice_image = tifffile.imread(file_path)
             tif.write(slice_image, photometric="minisblack")
+
+
+def read_stack(data_dir: Path) -> np.ndarray:
+    """Sequentially read images in directory and merge them into a 3D stack with shape
+    ZCYX"""
+
+    image_list = sorted(list(data_dir.glob("*.tif")))
+    y_dim, x_dim = tifffile.imread(image_list[0]).shape
+    z_dim = len(image_list)
+    channels = 1
+    volume_stack = np.empty((z_dim, channels, y_dim, x_dim))
+    for i, image_path in enumerate(tqdm(image_list, "Reading slices")):
+        volume_stack[i, 0] = tifffile.imread(image_path)
+    return volume_stack
