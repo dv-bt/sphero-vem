@@ -94,4 +94,4 @@ def register_to_disk(
     )
     final_image = sitk.Cast(final_image, sitk.sitkUInt8)
     final_image_array = sitk.GetArrayViewFromImage(final_image)
-    imwrite(dest_path, final_image_array)
+    imwrite(dest_path, final_image_array, uncompressed=True)

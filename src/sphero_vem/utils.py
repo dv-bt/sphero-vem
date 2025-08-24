@@ -3,6 +3,7 @@ Utility functions
 """
 
 import os
+import yaml
 from datetime import datetime
 import xxhash
 from pathlib import Path
@@ -89,11 +90,62 @@ def get_file_info(filepath: Path, data_root: Path) -> dict:
     }
 
 
-def read_section_errors(data_dir: Path) -> list[Path] | None:
+def _read_section_errors(data_dir: Path) -> list[str] | None:
     """Read tiles with sectioning errors, returns None if there is no file specifying
     them"""
     try:
         with open(data_dir / "folded_section_tiles.txt", "r") as f:
             return [line.strip() for line in f]
     except FileNotFoundError:
-        return
+        try:
+            with open(data_dir / "manifest.yaml", "r") as file:
+                manifest = yaml.safe_load(file)
+                return manifest.get("folded_section_tiles")
+        except FileNotFoundError:
+            return
+
+
+def generate_manifest(
+    dataset: str,
+    out_dir: Path,
+    images: list[Path],
+    processing: list[dict],
+) -> dict:
+    """Generate manifest.yaml file with processing steps and returns it as a
+    dictionary"""
+
+    data_dir = images[0].parent
+    data_root = _find_data_root(data_dir)
+
+    manifest = {
+        "dataset": dataset,
+        "generated_on": datetime.now().isoformat(),
+        "processing": _read_processing(data_dir) + processing,
+        "inputs": [str(p.relative_to(data_root)) for p in images],
+        "outputs": [str(p.name) for p in images],
+    }
+
+    error_tiles = _read_section_errors(data_dir)
+    if error_tiles:
+        manifest["folded_section_tiles"] = error_tiles
+
+    with open(out_dir / "manifest.yaml", "w") as f:
+        yaml.safe_dump(manifest, f, sort_keys=False)
+    return manifest
+
+
+def _read_processing(data_dir: Path) -> list[dict]:
+    """Read processing steps from a manifest. Returns an empty list"""
+    try:
+        with open(data_dir / "manifest.yaml", "r") as file:
+            manifest = yaml.safe_load(file)
+            return manifest.get("processing", [])
+    except FileNotFoundError:
+        return []
+
+
+def _find_data_root(dir: Path) -> Path:
+    """Find absolute path of the data root"""
+    for parent in dir.parents:
+        if parent.name == "data":
+            return parent

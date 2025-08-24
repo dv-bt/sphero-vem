@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
 from sphero_vem.registration import register_to_disk, TransformType
-from sphero_vem.utils import read_section_errors
+from sphero_vem.utils import _read_section_errors
 
 
 load_dotenv(".env")
@@ -103,10 +103,12 @@ def main():
     for data_dir in (DATA_ROOT / "processed/denoised").glob("*/*/"):
         out_dir = DATA_ROOT / f"processed/aligned/{data_dir.parent.name}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        error_tiles = read_section_errors(data_dir)
+        error_tiles = _read_section_errors(data_dir)
         images = sorted(list(data_dir.glob("*.tif")))
+        print(len(images))
         if error_tiles:
             images = [path for path in images if path.name not in error_tiles]
+            print(len(images))
         generate_manifest(data_dir, out_dir, images, args, error_tiles)
 
         shutil.copy(images[0], out_dir / images[0].name)
