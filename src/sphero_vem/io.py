@@ -1,6 +1,7 @@
 """Module containing input/output functions"""
 
 from pathlib import Path
+from tqdm import tqdm
 import numpy as np
 import torch
 import tifffile
@@ -47,3 +48,13 @@ def imread_labels_downscaled(
     labels = tifffile.imread(labels_path)
     labels_resized = downscale_labels(labels, factor)
     return labels_resized.squeeze().numpy()
+
+
+def make_stack(data_dir: Path, out_file: Path) -> None:
+    """Merge images in a folder into a single ZYX tif"""
+
+    image_list = sorted(list(data_dir.glob("*.tif")))
+    with tifffile.TiffWriter(out_file, ome=True) as tif:
+        for file_path in tqdm(image_list, desc="Writing slices"):
+            slice_image = tifffile.imread(file_path)
+            tif.write(slice_image, photometric="minisblack")
