@@ -50,25 +50,24 @@ def imread_labels_downscaled(
     return labels_resized.squeeze().numpy()
 
 
-def write_stack(data_dir: Path, out_file: Path) -> None:
-    """Merge images in a folder into a single ZYX tif"""
+def write_stack(data_dir: Path, out_file: Path, channel_axis: bool = False) -> None:
+    """Merge images in a folder into a single ZYX tif. If channel_axis option is True,
+    save also a channel of size 1 so that every image is CYZ"""
 
-    image_list = sorted(list(data_dir.glob("*.tif")))
-    with tifffile.TiffWriter(out_file, ome=True) as tif:
-        for file_path in tqdm(image_list, desc="Writing slices"):
-            slice_image = tifffile.imread(file_path)
-            tif.write(slice_image, photometric="minisblack")
+    volume_stack = read_stack(data_dir, channel_axis=channel_axis)
+    tifffile.imwrite(out_file, volume_stack)
 
 
-def read_stack(data_dir: Path) -> np.ndarray:
+def read_stack(data_dir: Path, channel_axis: bool = False) -> np.ndarray:
     """Sequentially read images in directory and merge them into a 3D stack with shape
-    ZCYX"""
+    ZYX. If the channel_axis option is on, a channel dimension of size 1 is added to have
+    shape ZCYX"""
 
     image_list = sorted(list(data_dir.glob("*.tif")))
-    y_dim, x_dim = tifffile.imread(image_list[0]).shape
-    z_dim = len(image_list)
-    channels = 1
-    volume_stack = np.empty((z_dim, channels, y_dim, x_dim))
+    first_image = tifffile.imread(image_list[0])
+    image_shape = (1, *first_image.shape) if channel_axis else first_image.shape
+    volume_stack = np.empty((len(image_list), *image_shape), first_image.dtype)
     for i, image_path in enumerate(tqdm(image_list, "Reading slices")):
-        volume_stack[i, 0] = tifffile.imread(image_path)
+        image = tifffile.imread(image_path).reshape(*image_shape)
+        volume_stack[i] = image
     return volume_stack
