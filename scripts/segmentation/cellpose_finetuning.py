@@ -37,6 +37,11 @@ def parse_arguments() -> CellposeConfig:
         default=CellposeConfig.seg_target,
         help="Segmentation target: 'cells' or 'nuclei'",
     )
+    parser.add_argument(
+        "--use-float32",
+        action="store_true",
+        help="Use float32 for model weights. Otherwise use bfloat16 (default)",
+    )
 
     args = parser.parse_args()
 

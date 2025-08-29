@@ -32,6 +32,7 @@ class CellposeConfig:
     random_state: int = 42
     seg_target: str = "cells"
     save_predictions: bool = True
+    use_bfloat16: bool = True
 
     # Parameters that are initialized by post_init
     model_name: str = ""
@@ -163,6 +164,7 @@ class CellposeLogger:
                 "batch_size": config.batch_size,
                 "downscaling": config.downscaling,
                 "n_epochs": config.n_epochs,
+                "use_bfloat16": config.use_bfloat16,
             }
         )
 
@@ -262,7 +264,7 @@ def finetune_cellpose(config: CellposeConfig):
     train_files, test_files = split_dataset(config)
     _generate_manifest(config, train_files, test_files)
 
-    cellpose_model = models.CellposeModel(gpu=True)
+    cellpose_model = models.CellposeModel(gpu=True, use_bfloat16=config.use_bfloat16)
 
     train_data, train_labels = load_data(config, train_files)
     test_data, test_labels = load_data(config, test_files)
