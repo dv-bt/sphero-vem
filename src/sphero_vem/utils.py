@@ -90,7 +90,7 @@ def get_file_info(filepath: Path, data_root: Path) -> dict:
     }
 
 
-def _read_section_errors(data_dir: Path) -> list[str] | None:
+def read_section_errors(data_dir: Path) -> list[str] | None:
     """Read tiles with sectioning errors, returns None if there is no file specifying
     them"""
     try:
@@ -98,9 +98,8 @@ def _read_section_errors(data_dir: Path) -> list[str] | None:
             return [line.strip() for line in f]
     except FileNotFoundError:
         try:
-            with open(data_dir / "manifest.yaml", "r") as file:
-                manifest = yaml.safe_load(file)
-                return manifest.get("folded_section_tiles")
+            manifest = read_manifest(data_dir)
+            return manifest.get("folded_section_tiles")
         except FileNotFoundError:
             return
 
@@ -110,38 +109,40 @@ def generate_manifest(
     out_dir: Path,
     images: list[Path],
     processing: list[dict],
+    **extra_fields,
 ) -> dict:
     """Generate manifest.yaml file with processing steps and returns it as a
     dictionary"""
 
     data_dir = images[0].parent
     data_root = _find_data_root(data_dir)
+    old = read_manifest(data_dir)
 
     manifest = {
         "dataset": dataset,
         "generated_on": datetime.now().isoformat(),
-        "processing": _read_processing(data_dir) + processing,
+        "processing": old.get("processing", []) + processing,
         "inputs": [str(p.relative_to(data_root)) for p in images],
         "outputs": [str(p.name) for p in images],
+        **extra_fields,
     }
 
-    error_tiles = _read_section_errors(data_dir)
-    if error_tiles:
-        manifest["folded_section_tiles"] = error_tiles
+    error_tiles = read_section_errors(data_dir)
+    manifest.update({"folded_section_tiles": error_tiles} if error_tiles else {})
+    manifest.update({"discarded": old["discarded"]} if old.get("discarded") else {})
 
     with open(out_dir / "manifest.yaml", "w") as f:
         yaml.safe_dump(manifest, f, sort_keys=False)
     return manifest
 
 
-def _read_processing(data_dir: Path) -> list[dict]:
-    """Read processing steps from a manifest. Returns an empty list"""
+def read_manifest(data_dir: Path) -> dict:
+    """Read manifest in directory"""
     try:
         with open(data_dir / "manifest.yaml", "r") as file:
-            manifest = yaml.safe_load(file)
-            return manifest.get("processing", [])
+            return yaml.safe_load(file)
     except FileNotFoundError:
-        return []
+        return {}
 
 
 def _find_data_root(dir: Path) -> Path:
@@ -149,3 +150,15 @@ def _find_data_root(dir: Path) -> Path:
     for parent in dir.parents:
         if parent.name == "data":
             return parent
+
+
+def vprint(text: str, verbose: bool) -> None:
+    """Helper function for cleanly handling print statements with a verbose option"""
+    if verbose:
+        print(text)
+
+
+def timestamp() -> str:
+    """Returns a timestamp for the current time up to seconds, ISO-formatted and
+    widely filesystem compatible"""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")

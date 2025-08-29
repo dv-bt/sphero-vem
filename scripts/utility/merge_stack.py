@@ -4,6 +4,7 @@ Merge images into a volume stack
 
 import argparse
 import os
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 from sphero_vem.io import write_stack
@@ -42,6 +43,7 @@ def main():
     out_dir = args.source / "stacked"
     out_dir.mkdir(exist_ok=True)
     out_file = out_dir / f"{dataset}-stacked.tif"
+    shutil.copy(args.source / "manifest.yaml", out_dir / "manifest.yaml")
     write_stack(args.source, out_file)
 
 

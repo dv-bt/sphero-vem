@@ -53,6 +53,7 @@ def parse_arguments() -> CellposeConfig:
         n_epochs=args.epochs,
         test_size=args.test_size,
         seg_target=args.seg_target,
+        use_bfloat16=not args.use_float32,
     )
 
 

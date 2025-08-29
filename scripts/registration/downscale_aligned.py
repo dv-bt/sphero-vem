@@ -8,7 +8,7 @@ from tqdm import tqdm
 from pathlib import Path
 from dotenv import load_dotenv
 from sphero_vem.io import imread_downscaled, imwrite
-from sphero_vem.utils import generate_manifest
+from sphero_vem.utils import generate_manifest, read_section_errors
 
 
 load_dotenv(".env")
@@ -31,10 +31,23 @@ def parse_args():
 def main():
     args = parse_args()
     factor = args.factor
+    extra_fields = {}
     for data_dir in (DATA_ROOT / "processed/aligned").glob("*/"):
         out_dir = data_dir / f"downscaled/downscaled-{factor}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        images = sorted(list(data_dir.glob("*.tif")))
+        images = sorted(data_dir.glob("*.tif"))
+
+        # If factor 10, use every other image to have isotropic voxels (100 nm side)
+        if args.factor == 10:
+            section_errors = read_section_errors(data_dir)
+            all_images = sorted([image.name for image in images] + section_errors)
+            selected = all_images[::2]
+            discarded = all_images[1::2]
+            images = [
+                data_dir / name for name in selected if name not in section_errors
+            ]
+            extra_fields["discarded"] = discarded
+
         generate_manifest(
             data_dir.name,
             out_dir,
@@ -45,6 +58,7 @@ def main():
                     "factor": factor,
                 }
             ],
+            **extra_fields,
         )
         for image_path in tqdm(images, desc="Downscaling images"):
             image = imread_downscaled(image_path, factor)

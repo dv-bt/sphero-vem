@@ -10,8 +10,8 @@ import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
-from sphero_vem.registration import register_to_disk, TransformType
-from sphero_vem.utils import _read_section_errors
+from sphero_vem.registration import register_to_disk_itk, TransformType
+from sphero_vem.utils import read_section_errors
 
 
 load_dotenv(".env")
@@ -103,7 +103,7 @@ def main():
     for data_dir in (DATA_ROOT / "processed/denoised").glob("*/*/"):
         out_dir = DATA_ROOT / f"processed/aligned/{data_dir.parent.name}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        error_tiles = _read_section_errors(data_dir)
+        error_tiles = read_section_errors(data_dir)
         images = sorted(list(data_dir.glob("*.tif")))
         print(len(images))
         if error_tiles:
@@ -114,7 +114,7 @@ def main():
         shutil.copy(images[0], out_dir / images[0].name)
 
         for i in tqdm(range(len(images) - 1), "Aligning images"):
-            register_to_disk(
+            register_to_disk_itk(
                 out_dir / images[i].name,
                 images[i + 1],
                 out_dir / images[i + 1].name,

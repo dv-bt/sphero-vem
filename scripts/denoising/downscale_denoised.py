@@ -11,7 +11,7 @@ from tqdm import tqdm
 from pathlib import Path
 from dotenv import load_dotenv
 from sphero_vem.io import imread_downscaled, imwrite
-from sphero_vem.utils import _read_section_errors
+from sphero_vem.utils import read_section_errors
 
 
 load_dotenv(".env")
@@ -70,7 +70,7 @@ def main():
     for data_dir in (DATA_ROOT / "processed/denoised").glob("*/*/"):
         out_dir = data_dir / f"downscaled/downscaled-{factor}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        error_tiles = _read_section_errors(data_dir)
+        error_tiles = read_section_errors(data_dir)
         images = sorted(list(data_dir.glob("*.tif")))
         generate_manifest(data_dir, out_dir, images, factor, error_tiles)
         for image_path in tqdm(images, desc="Downscaling images"):

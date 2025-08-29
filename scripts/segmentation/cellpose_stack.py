@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import tifffile
 from cellpose.models import CellposeModel
 from sphero_vem.io import read_stack
+from sphero_vem.utils import generate_manifest, timestamp
 
 
 load_dotenv(".env")
@@ -26,6 +27,7 @@ def parse_args():
         type=Path,
         help="Source directory",
     )
+    parser.add_argument("-m", "--model", type=str, help="Model name")
     args = parser.parse_args()
     args.data_dir = DATA_ROOT / args.data_dir
     return args
@@ -34,14 +36,26 @@ def parse_args():
 def main():
     args = parse_args()
 
-    model_path = (
-        DATA_ROOT
-        / "models/cellpose/cellposeSAM-cells-ds5-20250823_202550/models/cellposeSAM-cells-ds5-20250823_202550"
-    )
-    seg_target = "cells"
+    model_path = DATA_ROOT / f"models/cellpose/{args.model}/models/{args.model}"
+
+    # Parameters
     dataset = "Au_01-vol_01"
-    out_dir = DATA_ROOT / f"segmented/{dataset}/{seg_target}"
+
+    seg_params = {
+        "step": "segmentation",
+        "model": args.model,
+        "seg_target": "cells",
+        "batch_size": 128,
+    }
+
+    out_dir = (
+        DATA_ROOT
+        / f"processed/segmented/{dataset}/{seg_params['seg_target']}-run{timestamp()}"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
+    generate_manifest(
+        dataset, out_dir, sorted(args.data_dir.glob("*.tif")), [seg_params]
+    )
 
     volume_stack = read_stack(args.data_dir)
     cellpose_model = CellposeModel(gpu=True, pretrained_model=model_path)
@@ -50,7 +64,11 @@ def main():
     print(f"Starting segmentation at {time_start}")
 
     masks, _, _ = cellpose_model.eval(
-        volume_stack, batch_size=64, do_3D=True, channel_axis=1, z_axis=0
+        volume_stack,
+        batch_size=seg_params["batch_size"],
+        do_3D=True,
+        channel_axis=1,
+        z_axis=0,
     )
 
     time_finish = datetime.now()
