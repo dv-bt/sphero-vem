@@ -5,8 +5,10 @@ Functions for preprocessing images.
 from typing import Literal
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torchvision import tv_tensors
 import torchvision.transforms.v2 as transforms
+from torchvision.transforms.functional import resize
 
 
 class Normalize(torch.nn.Module):
@@ -98,3 +100,32 @@ def downscale_labels(
     )
     image_resized: tv_tensors.Image = resize(image)
     return image_resized
+
+
+def create_pyramid(
+    image: torch.Tensor, num_levels: int, factor: int
+) -> list[torch.tensor]:
+    """Creates a multi-resolution pyramid for an image tensor."""
+    pyramid = [image]
+    for _ in range(num_levels - 1):
+        image = resize(image, image.shape[-1] // factor)
+        pyramid.append(image)
+    return list(reversed(pyramid))
+
+
+def downscale_tensor(image: torch.Tensor, factor: int) -> torch.tensor:
+    """Dowscales a tensor or a batch of tensors using bilinar interpolation"""
+    n_dim = image.dim()
+    while image.dim() < 4:
+        image = image.unsqueeze(0)
+    image_ds: torch.Tensor = F.interpolate(
+        image,
+        scale_factor=1 / factor,
+        mode="bilinear",
+        align_corners=False,
+        antialias=True,
+    )
+    # Make sure that output has the same number of dimensions of input
+    while image_ds.dim() > n_dim:
+        image_ds = image_ds.squeeze(0)
+    return image_ds

@@ -162,3 +162,17 @@ def timestamp() -> str:
     """Returns a timestamp for the current time up to seconds, ISO-formatted and
     widely filesystem compatible"""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def detect_torch_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def infer_dataset(data_dir: Path) -> str:
+    """Infer dataset name from the name of images in the data directory"""
+    image_name = list(data_dir.glob("*.tif"))[0].name
+    return image_name[: image_name.rfind("-z_")]

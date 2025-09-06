@@ -160,3 +160,6 @@ notebooks/temp
 
 # Temporarily remove notebooks
 notebooks/
+
+# Scratch folder
+scripts/scratch/

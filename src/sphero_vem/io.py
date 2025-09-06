@@ -5,6 +5,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import tifffile
+from torchvision.transforms.functional import resize
 from sphero_vem.preprocessing import downscale_image, downscale_labels
 
 
@@ -71,3 +72,23 @@ def read_stack(data_dir: Path, channel_axis: bool = False) -> np.ndarray:
         image = tifffile.imread(image_path).reshape(*image_shape)
         volume_stack[i] = image
     return volume_stack
+
+
+def read_tensor(
+    image_path: Path,
+    dtype: torch.dtype = torch.float32,
+    ds_factor: int = 1,
+    return_4d: bool = True,
+) -> torch.Tensor:
+    """Read a tiff image as a pytorch tensor. Returns a tensor of shape 1 x H x W.
+    If ds_factor > 1, applies downscaling by that factor to the image.
+    If return_4d is true, returns a tensor of size 1 x 1 x H x W"""
+    image = tifffile.imread(image_path)
+    image_torch = torch.tensor(image, dtype=dtype).unsqueeze(0)
+    if return_4d:
+        image_torch = image_torch.unsqueeze(0)
+    if ds_factor > 1:
+        image_torch = resize(
+            image_torch, image_torch.shape[-1] // ds_factor, antialias=True
+        )
+    return image_torch

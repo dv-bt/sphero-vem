@@ -67,6 +67,8 @@ def generate_manifest(
 def main():
     args = parse_args()
     factor = args.factor
+    denoised_dir = DATA_ROOT / "processed/denoised"
+    print(denoised_dir, denoised_dir.exists())
     for data_dir in (DATA_ROOT / "processed/denoised").glob("*/*/"):
         out_dir = data_dir / f"downscaled/downscaled-{factor}"
         out_dir.mkdir(parents=True, exist_ok=True)
