@@ -374,7 +374,7 @@ def _create_log_entry(
         "pair_index_start": i,
         "fixed_image_path": fixed_path.name,
         "moving_image_path": moving_path.name,
-        "final_loss": loss_history[-1] if loss_history else None,
+        "final_loss": loss_history[-1][1] if loss_history else None,
         "num_steps_taken": len(loss_history),
     }
     return log_entry
@@ -401,6 +401,6 @@ def _create_processing_entry(config: RegistrationConfig) -> list[dict]:
 
 
 def _expand_pyramid_list(param: int | list, levels: int) -> list:
-    if isinstance(param, int):
+    if isinstance(param, int) or isinstance(param, float):
         param = [param for i in range(levels)]
     return param
