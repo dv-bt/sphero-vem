@@ -38,7 +38,9 @@ class RegistrationConfig:
     pyramid_levels: int = 4
     pyramid_factors: int | list[int] = 2
     pyramid_epochs: int | list[int] = 300
-    learning_rate: float | list[float] = 1e-4
+    learning_rate: float | list[float] = field(
+        default_factory=lambda: [1e-3, 1e-3, 5e-4, 1e-4]
+    )
     loss_type: str = "ncc"
     loss_kwargs: dict = field(default_factory=dict)
     optimizer: str = "Adam"
@@ -47,9 +49,12 @@ class RegistrationConfig:
     verbose: bool = True
     early_stopping: bool = True
     stop_window: int = 15
-    stop_tol: float = 1e-6
+    stop_tol: float = 1e-5
     transformation: str = "similarity"
     init_std: float = 0.001
+    scaling: bool = True
+    shear: bool = True
+    regularization_param: float = 0.5
 
     # Derived values, initialized by post_init
     dataset: Path = field(init=False)
@@ -175,29 +180,47 @@ def register_to_disk_itk(
 
 def _affine_transform(q: torch.Tensor) -> torch.Tensor:
     """
-    Build a batch of 2x3 affine transformation matrices from scaled parameters.
-    Constructs 2D affine matrices with rotation and translation degrees of freedom.
+    Build a batch of 2x3 affine transformation matrices from 6 parameters.
+    Constructs 2D affine matrices with translation, rotation, scaling, and shear.
+    The order of operations is: Scale -> Shear -> Rotate -> Translate.
 
     Parameters
     ----------
     q : torch.Tensor
-        Tensor of shape (N, 3) containing parameters per example as
-        [tx, ty, theta]. tx and ty are translation components, theta is the
-        rotation angle. Angles are expected to be in radians.
+        Tensor of shape (N, 6) containing parameters per example:
+        [tx, ty, theta, sx, sy, k]
+        - tx, ty: translation components
+        - theta: rotation angle in radians
+        - sx, sy: scaling factors
+        - k: horizontal shear factor
 
     Returns
     -------
     torch.Tensor
-        Tensor of shape (N, 2, 3) where each 2x3 matrix has the form:
-            [[cos(theta), -sin(theta), tx],
-             [sin(theta),  cos(theta), ty]]
-        The returned tensor preserves the dtype and device of the input `q`.
+        Tensor of shape (N, 2, 3) representing the affine transformation.
+        Each 2x3 matrix is the result of composing the individual transformations.
     """
     t = q[:, :2]
     ang = q[:, 2]
+    scale = q[:, 3:5]
+    shear_k = q[:, 5]
+
     c, s = torch.cos(ang), torch.sin(ang)
-    A = torch.stack([c, -s, t[:, 0], s, c, t[:, 1]], dim=-1).view(-1, 2, 3)
-    return A
+    sx, sy = scale[:, 0], scale[:, 1]
+
+    # Construct the 2x2 linear transformation matrix (Scale -> Shear -> Rotate)
+    # This combines the effects of scaling, shearing, and rotation
+    # A = R @ K @ S
+    # R = [[c, -s], [s, c]]
+    # K = [[1, k], [0, 1]] (horizontal shear)
+    # S = [[sx, 0], [0, sy]]
+    A_11 = sx * c
+    A_12 = sy * (shear_k * c - s)
+    A_21 = sx * s
+    A_22 = sy * (shear_k * s + c)
+    A = torch.stack([A_11, A_12, t[:, 0], A_21, A_22, t[:, 1]], dim=-1)
+
+    return A.view(-1, 2, 3)
 
 
 def _warp_affine(
@@ -211,12 +234,34 @@ def _warp_affine(
 
 
 class ImageTransform(torch.nn.Module):
-    def __init__(self, device: torch.device, q_init: torch.Tensor | None = None):
+    def __init__(
+        self, config: RegistrationConfig, delta_q_init: torch.Tensor | None = None
+    ):
         super().__init__()
-        self.q = torch.nn.Parameter(q_init)
+        self.delta_q = torch.nn.Parameter(delta_q_init)
+        self.q_identity = torch.tensor(
+            [
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+            ],
+            device=config.device,
+        ).unsqueeze(0)
+
+        # Mask transformation parameters that are not used
+        # Rotation and translation are always considered
+        scaling = 1.0 if (config.transformation == "affine" and config.scaling) else 0.0
+        shear = 1.0 if (config.transformation == "affine" and config.shear) else 0.0
+        self.params_mask = torch.tensor(
+            [1.0, 1.0, 1.0, scaling, scaling, shear], device=config.device
+        ).unsqueeze(0)
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
-        A = _affine_transform(self.q)
+        q = self.delta_q * self.params_mask + self.q_identity
+        A = _affine_transform(q)
         return _warp_affine(img, A)
 
 
@@ -237,8 +282,20 @@ def register_image_pair(
     fixed_img = fixed_img.to(config.device)
     moving_img = moving_img.to(config.device)
 
-    # Initialize transformation parameters
-    q_init = torch.randn(1, 3, device=config.device) * config.init_std
+    # Initialize transformation parameters.
+    # The transformation is learned as a deviation from the identity transform.
+    # This is done so that all parameters are zero-centered
+    delta_q_init = torch.randn(1, 6, device=config.device) * config.init_std
+    q_identity = torch.tensor(
+        [
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+        ]
+    )
     loss_fun = LossDispatcher(config.loss_type)
     early_stop_history = deque(maxlen=config.stop_window)
     full_loss_history = []
@@ -248,7 +305,9 @@ def register_image_pair(
             fixed_ds = downscale_tensor(fixed_img, config.pyramid_factors[level])
             moving_ds = downscale_tensor(moving_img, config.pyramid_factors[level])
 
-        model = ImageTransform(device=config.device, q_init=q_init).to(config.device)
+        model = ImageTransform(config=config, delta_q_init=delta_q_init).to(
+            config.device
+        )
         optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate[level])
 
         pbar = trange(
@@ -261,7 +320,11 @@ def register_image_pair(
         for _ in pbar:
             optimizer.zero_grad()
             warped_img = model(moving_ds)
-            loss: torch.Tensor = loss_fun(fixed_ds, warped_img, **config.loss_kwargs)
+            loss = loss_fun(
+                fixed_ds, warped_img, **config.loss_kwargs
+            ) + config.regularization_param * torch.sum(
+                (model.delta_q[:, 3:] * model.params_mask[:, 3:]) ** 2
+            )
             loss.backward()
             optimizer.step()
 
@@ -275,9 +338,9 @@ def register_image_pair(
                 ):
                     break
 
-        q_init = model.q
+        delta_q_init = model.delta_q
 
-    q_final = model.q.detach().cpu()
+    q_final = model.delta_q.detach().cpu() + q_identity
 
     return q_final, full_loss_history
 
@@ -320,11 +383,11 @@ def register_stack(config: RegistrationConfig) -> None:
         warped_img = _warp_affine(moving_img, A_composed, "bicubic")
         tifffile.imwrite(
             config.out_dir / moving_path.name,
-            warped_img.squeeze(0).to(torch.uint8).numpy(),
+            warped_img.squeeze(0).squeeze(0).to(torch.uint8).numpy(),
         )
 
         # Update storage lists
-        all_loss_histories.append(loss_history)
+        all_loss_histories.append(_pad_loss_history(loss_history, config))
         pairwise_matrices.append(A_pairwise)
         composed_matrices.append(A_composed)
         log_data.append(_create_log_entry(i, fixed_path, moving_path, loss_history))
@@ -404,3 +467,12 @@ def _expand_pyramid_list(param: int | list, levels: int) -> list:
     if isinstance(param, int) or isinstance(param, float):
         param = [param for i in range(levels)]
     return param
+
+
+def _pad_loss_history(loss_history: list, config: RegistrationConfig) -> np.ndarray:
+    """Pad loss history with NaN to compensate for inhomogeneous lengths due to
+    early stopping"""
+    history_arr = np.array(loss_history)
+    padded_history = np.full((sum(config.pyramid_epochs), 2), np.nan)
+    padded_history[: len(history_arr), :] = history_arr
+    return padded_history

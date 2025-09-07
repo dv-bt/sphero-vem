@@ -5,8 +5,7 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import tifffile
-from torchvision.transforms.functional import resize
-from sphero_vem.preprocessing import downscale_image, downscale_labels
+from sphero_vem.preprocessing import downscale_image, downscale_labels, downscale_tensor
 
 
 def imwrite(
@@ -84,11 +83,10 @@ def read_tensor(
     If ds_factor > 1, applies downscaling by that factor to the image.
     If return_4d is true, returns a tensor of size 1 x 1 x H x W"""
     image = tifffile.imread(image_path)
-    image_torch = torch.tensor(image, dtype=dtype).unsqueeze(0)
+    image_torch = torch.tensor(image, dtype=dtype)
     if return_4d:
-        image_torch = image_torch.unsqueeze(0)
+        while image_torch.dim() < 4:
+            image_torch = image_torch.unsqueeze(0)
     if ds_factor > 1:
-        image_torch = resize(
-            image_torch, image_torch.shape[-1] // ds_factor, antialias=True
-        )
+        image_torch = downscale_tensor(image_torch, ds_factor)
     return image_torch
