@@ -79,7 +79,8 @@ def read_tensor(
     ds_factor: int = 1,
     return_4d: bool = True,
 ) -> torch.Tensor:
-    """Read a tiff image as a pytorch tensor. Returns a tensor of shape 1 x H x W.
+    """Read a tiff image as a pytorch tensor. Returns a tensor of the same shape as
+    the image.
     If ds_factor > 1, applies downscaling by that factor to the image.
     If return_4d is true, returns a tensor of size 1 x 1 x H x W"""
     image = tifffile.imread(image_path)
