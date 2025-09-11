@@ -4,7 +4,7 @@ This module contains functions and classes used for segmentation
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import json
 from datetime import datetime
@@ -16,7 +16,7 @@ from cellpose import models, train, io, metrics
 import numpy as np
 import pandas as pd
 from sphero_vem.io import imread_downscaled, imread_labels_downscaled, imwrite
-from sphero_vem.utils import get_file_info
+from sphero_vem.utils import get_file_info, read_manifest, timestamp
 
 
 @dataclass
@@ -24,27 +24,28 @@ class CellposeConfig:
     """Configuration class for fine-tuning cellpose"""
 
     dir_labeled: Path | str
-    downscaling: int = 16
+    downscaling: int = 10
     learning_rate: float = 5e-5
-    batch_size: int = 128
+    batch_size: int = 8
     n_epochs: int = 100
     test_size: float = 0.2
     random_state: int = 42
     seg_target: str = "cells"
     save_predictions: bool = True
     use_bfloat16: bool = True
+    dry_run: bool = False
 
     # Parameters that are initialized by post_init
-    model_name: str = ""
-    data_root: Path = Path()
-    dir_experiment: Path = Path()
-    dir_predictions: Path = Path()
-    wandb_api_key: str = ""
+    model_name: str = field(init=False)
+    data_root: Path = field(init=False)
+    dir_experiment: Path = field(init=False)
+    dir_predictions: Path = field(init=False)
+    wandb_api_key: str = field(init=False)
+    downscaling_eff: int = field(init=False)
+    preprocessing: list[dict] = field(init=False)
 
     def __post_init__(self):
         """Load environment variables and init derived values"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
         if self.seg_target == "cells":
             self.wandb_project = "cell-segmentation"
         elif self.seg_target == "nuclei":
@@ -53,20 +54,43 @@ class CellposeConfig:
         self.data_root = Path(os.getenv("DATA_ROOT"))
 
         self.model_name = (
-            f"cellposeSAM-{self.seg_target}-ds{self.downscaling}-{timestamp}"
+            f"cellposeSAM-{self.seg_target}-ds{self.downscaling}-{timestamp()}"
         )
         self.dir_labeled = self.data_root / self.dir_labeled
         self.dir_experiment = self.data_root / "models/cellpose" / self.model_name
-        self.dir_experiment.mkdir(parents=True, exist_ok=True)
+        if not self.dry_run:
+            self.dir_experiment.mkdir(parents=True, exist_ok=True)
 
         if self.save_predictions:
             self.dir_predictions = (
                 self.data_root / "processed/segmented/finetuning" / self.model_name
             )
-            self.dir_predictions.mkdir(parents=True, exist_ok=True)
+            if not self.dry_run:
+                self.dir_predictions.mkdir(parents=True, exist_ok=True)
+
+        self.preprocessing = read_manifest(self.dir_labeled).get("processing", [])
+        self.downscaling_eff = self.calculate_downscaling()
+
+    def calculate_downscaling(self) -> int:
+        """Calcualte effective donwscaling to apply to images"""
+        downscaling_old = 1
+        try:
+            for processing in self.preprocessing:
+                if processing.get("step") == "downscaling":
+                    downscaling_old = processing["factor"]
+        # Account for manifest not conforming to standard representation
+        except AttributeError:
+            pass
+        if self.downscaling % downscaling_old == 0:
+            return self.downscaling // downscaling_old
+        else:
+            raise ValueError(
+                f"Supplied global downscaling {self.downscaling} is incompatible with "
+                f"labeled dataset already downscaled by factor {downscaling_old}"
+            )
 
 
-def _generate_manifest(
+def _generate_training_manifest(
     config: CellposeConfig,
     train_files: list[Path],
     test_files: list[Path],
@@ -79,7 +103,8 @@ def _generate_manifest(
         "learning_rate": config.learning_rate,
         "batch_size": config.batch_size,
         "n_epochs": config.n_epochs,
-        "preprocessing_steps": [],
+        "preprocessing_training": [],
+        "preprocessing_labels": config.preprocessing,
         "train_files": [],
         "test_files": [],
     }
@@ -97,12 +122,13 @@ def _generate_manifest(
         {
             "step": "downscaling",
             "factor": config.downscaling,
+            "factor_eff": config.downscaling_eff,
             "normalization": None,
         }
     ]
 
     for preprocessing_step in preprocessing:
-        training_manifest["preprocessing_steps"].append(preprocessing_step)
+        training_manifest["preprocessing_training"].append(preprocessing_step)
 
     # Save manifest locally and send to WandB
     manifest_path = config.dir_experiment / "training_manifest.json"
@@ -196,14 +222,21 @@ def split_dataset(config: CellposeConfig) -> tuple[list[Path], list[Path]]:
     - labels/image-cells.tif
 
     """
-    image_list = [
-        path
-        for path in config.dir_labeled.glob("*.tif")
-        if _labels_path(config, path).exists()
-    ]
-    train_files, test_files = train_test_split(
-        image_list, test_size=config.test_size, random_state=config.random_state
-    )
+    # Ensure an even split between different imaging planes, if present
+    train_files = []
+    test_files = []
+    for axis in ["x", "y", "z"]:
+        image_list = [
+            path
+            for path in config.dir_labeled.glob(f"*-{axis}_*.tif")
+            if _labels_path(config, path).exists()
+        ]
+        if image_list != []:
+            train_slices, test_slices = train_test_split(
+                image_list, test_size=config.test_size, random_state=config.random_state
+            )
+            train_files += train_slices
+            test_files += test_slices
     return train_files, test_files
 
 
@@ -217,6 +250,12 @@ def load_data(
     Example: with config.seg_target='cells', a valid image/labels pair is:
     - image.tif
     - labels/image-cells.tif
+    NOTE: that the downscaling factor defined for the model refers to the images in their
+    original size at acquisition. When loading data, prior downscaling done on the
+    train and test dataset is taken into account, and an effective downscaling is
+    applied to achieve the correct global downscaling factor. Particular care must be
+    used therefore when an already downscaled dataset is used, since not all factors
+    will give correct images.
 
     Parameters
     ----------
@@ -233,10 +272,10 @@ def load_data(
         - Second list: loaded and downscaled label masks as numpy arrays
 
     """
-    data = [imread_downscaled(path, config.downscaling) for path in image_files]
+    data = [imread_downscaled(path, config.downscaling_eff) for path in image_files]
     labels_files = [_labels_path(config, path) for path in image_files]
     labels = [
-        imread_labels_downscaled(path, config.downscaling) for path in labels_files
+        imread_labels_downscaled(path, config.downscaling_eff) for path in labels_files
     ]
     return data, labels
 
@@ -262,7 +301,7 @@ def finetune_cellpose(config: CellposeConfig):
     logger = CellposeLogger(config)
 
     train_files, test_files = split_dataset(config)
-    _generate_manifest(config, train_files, test_files)
+    _generate_training_manifest(config, train_files, test_files)
 
     cellpose_model = models.CellposeModel(gpu=True, use_bfloat16=config.use_bfloat16)
 

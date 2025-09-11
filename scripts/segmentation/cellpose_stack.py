@@ -3,13 +3,13 @@ Segment a volume stack using cellpose
 """
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 import argparse
 from dotenv import load_dotenv
-import tifffile
 from cellpose.models import CellposeModel
-from sphero_vem.io import read_stack
+from sphero_vem.io import read_stack, imwrite
 from sphero_vem.utils import generate_manifest, timestamp
 
 
@@ -33,6 +33,11 @@ def parse_args():
     return args
 
 
+def match_model_target(model_name: str) -> str:
+    match = re.search(r"cellposeSAM-(\w+)-", model_name)
+    return match.group(1)
+
+
 def main():
     args = parse_args()
 
@@ -44,7 +49,7 @@ def main():
     seg_params = {
         "step": "segmentation",
         "model": args.model,
-        "seg_target": "cells",
+        "seg_target": match_model_target(args.model),
         "batch_size": 128,
     }
 
@@ -75,7 +80,9 @@ def main():
     print(f"Completed segmentation at {time_finish}")
     print(f"Elapsed time: {time_finish - time_start}")
 
-    tifffile.imwrite(out_dir / f"{dataset}-cells.tif", masks)
+    imwrite(
+        out_dir / f"{dataset}-{seg_params['seg_target']}.tif", masks, uncompressed=False
+    )
 
 
 if __name__ == "__main__":

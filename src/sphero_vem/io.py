@@ -75,12 +75,14 @@ def read_stack(data_dir: Path, channel_axis: bool = False) -> np.ndarray:
 
 def read_tensor(
     image_path: Path,
-    dtype: torch.dtype = torch.float32,
+    dtype: torch.dtype | None = torch.float32,
     ds_factor: int = 1,
+    resample_mode: str = "bilinear",
     return_4d: bool = True,
 ) -> torch.Tensor:
     """Read a tiff image as a pytorch tensor. Returns a tensor of the same shape as
     the image.
+    If dtype is None, use the original dtype of the image.
     If ds_factor > 1, applies downscaling by that factor to the image.
     If return_4d is true, returns a tensor of size 1 x 1 x H x W"""
     image = tifffile.imread(image_path)
@@ -89,5 +91,5 @@ def read_tensor(
         while image_torch.dim() < 4:
             image_torch = image_torch.unsqueeze(0)
     if ds_factor > 1:
-        image_torch = downscale_tensor(image_torch, ds_factor)
+        image_torch = downscale_tensor(image_torch, ds_factor, resample_mode)
     return image_torch
