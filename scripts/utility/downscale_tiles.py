@@ -2,19 +2,13 @@
 Downscale images by a specified integer factor.
 """
 
-import os
 import argparse
 from tqdm import tqdm
 from pathlib import Path
-from dotenv import load_dotenv
 import torch
 import tifffile
 from sphero_vem.io import read_tensor
 from sphero_vem.utils import generate_manifest, read_section_errors
-
-
-load_dotenv(".env")
-DATA_ROOT = Path(os.environ.get("DATA_ROOT"))
 
 
 def parse_args():
@@ -40,7 +34,7 @@ def main():
     args = parse_args()
     factor = args.factor
     extra_fields = {}
-    data_dir = DATA_ROOT / args.source_dir
+    data_dir = args.source_dir
     out_dir = data_dir / f"downscaled/downscaled-{factor}"
     out_dir.mkdir(parents=True, exist_ok=True)
     images = sorted(data_dir.glob("*.tif"))
