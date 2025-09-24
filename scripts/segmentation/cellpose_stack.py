@@ -2,87 +2,86 @@
 Segment a volume stack using cellpose
 """
 
-import os
 import re
+from dataclasses import dataclass, field, asdict
+import tyro
 from datetime import datetime
 from pathlib import Path
-import argparse
-from dotenv import load_dotenv
 from cellpose.models import CellposeModel
 from sphero_vem.io import read_stack, imwrite
 from sphero_vem.utils import generate_manifest, timestamp
 
 
-load_dotenv(".env")
-DATA_ROOT = Path(os.environ.get("DATA_ROOT"))
+@dataclass
+class SegmentationParams:
+    """Parameters passed to the segmentation function"""
+
+    batch_size: int = 64
+    flow3D_smooth: int = 0
+    stitch_threshold: float = 0.0
+    cellprob_threshold: float = 0.0
 
 
-def parse_args():
-    """Parse command-line arguments."""
+@dataclass
+class Config:
+    """Segment a volume stack using cellpose"""
 
-    parser = argparse.ArgumentParser(description="Segment volume stack using Cellpose")
-    parser.add_argument(
-        "-d",
-        "--data_dir",
-        type=Path,
-        help="Source directory",
-    )
-    parser.add_argument("-m", "--model", type=str, help="Model name")
-    args = parser.parse_args()
-    args.data_dir = DATA_ROOT / args.data_dir
-    return args
+    data_dir: Path
+    model: str
+    seg_params: SegmentationParams
 
+    dataset: str = field(init=False)
+    seg_target: str = field(init=False)
+    model_dir: Path = field(init=False)
+    out_dir: Path = field(init=False)
+    out_path: Path = field(init=False)
 
-def match_model_target(model_name: str) -> str:
-    match = re.search(r"cellposeSAM-(\w+)-", model_name)
-    return match.group(1)
+    def __post_init__(self):
+        self.dataset = re.search(r"(Au_\d+-vol_\d+)", str(self.data_dir)).group(1)
+        self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
+        self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
+        self.out_dir = Path(
+            f"data/processed/segmented/{self.dataset}/{self.seg_target}-run{timestamp()}"
+        )
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.out_path = self.out_dir / f"{self.dataset}-{self.seg_target}.tif"
 
 
 def main():
-    args = parse_args()
+    config = tyro.cli(Config)
+    seg_params = asdict(config.seg_params)
 
-    model_path = DATA_ROOT / f"models/cellpose/{args.model}/models/{args.model}"
+    processing = [
+        {
+            "step": "segmentation",
+            "model": config.model,
+            "seg_target": config.seg_target,
+            **seg_params,
+        }
+    ]
 
-    # Parameters
-    dataset = "Au_01-vol_01"
-
-    seg_params = {
-        "step": "segmentation",
-        "model": args.model,
-        "seg_target": match_model_target(args.model),
-        "batch_size": 128,
-    }
-
-    out_dir = (
-        DATA_ROOT
-        / f"processed/segmented/{dataset}/{seg_params['seg_target']}-run{timestamp()}"
-    )
-    out_dir.mkdir(parents=True, exist_ok=True)
     generate_manifest(
-        dataset, out_dir, sorted(args.data_dir.glob("*.tif")), [seg_params]
+        config.dataset,
+        config.out_dir,
+        sorted(config.data_dir.glob("*.tif")),
+        processing,
     )
 
-    volume_stack = read_stack(args.data_dir)
-    cellpose_model = CellposeModel(gpu=True, pretrained_model=model_path)
+    volume_stack = read_stack(config.data_dir)
+    cellpose_model = CellposeModel(gpu=True, pretrained_model=config.model_dir)
 
     time_start = datetime.now()
     print(f"Starting segmentation at {time_start}")
 
     masks, _, _ = cellpose_model.eval(
-        volume_stack,
-        batch_size=seg_params["batch_size"],
-        do_3D=True,
-        channel_axis=1,
-        z_axis=0,
+        volume_stack, do_3D=True, channel_axis=1, z_axis=0, **seg_params
     )
 
     time_finish = datetime.now()
     print(f"Completed segmentation at {time_finish}")
     print(f"Elapsed time: {time_finish - time_start}")
 
-    imwrite(
-        out_dir / f"{dataset}-{seg_params['seg_target']}.tif", masks, uncompressed=False
-    )
+    imwrite(config.out_path, masks, uncompressed=False)
 
 
 if __name__ == "__main__":

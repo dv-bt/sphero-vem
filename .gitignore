@@ -154,7 +154,7 @@ cython_debug/
 .vscode/
 
 # Data files
-data/
+data*/
 scripts/benchmarks/assets
 notebooks/temp
 

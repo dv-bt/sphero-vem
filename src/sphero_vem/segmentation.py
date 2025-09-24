@@ -13,9 +13,10 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import wandb
 from cellpose import models, train, io, metrics
+import torch
 import numpy as np
 import pandas as pd
-from sphero_vem.io import imread_downscaled, imread_labels_downscaled, imwrite
+from sphero_vem.io import read_tensor, imwrite
 from sphero_vem.utils import get_file_info, read_manifest, timestamp
 
 
@@ -272,10 +273,15 @@ def load_data(
         - Second list: loaded and downscaled label masks as numpy arrays
 
     """
-    data = [imread_downscaled(path, config.downscaling_eff) for path in image_files]
+    data = [
+        read_tensor(path, None, config.downscaling_eff).numpy() for path in image_files
+    ]
     labels_files = [_labels_path(config, path) for path in image_files]
     labels = [
-        imread_labels_downscaled(path, config.downscaling_eff) for path in labels_files
+        read_tensor(
+            path, torch.uint8, config.downscaling_eff, resample_mode="nearest"
+        ).numpy()
+        for path in labels_files
     ]
     return data, labels
 

@@ -4,15 +4,10 @@ before a model checkpoint could be saved. The user will be prompted for admin
 password if elevation is required.
 """
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
-from dotenv import load_dotenv
 import argparse
-
-load_dotenv(".env")
-DATA_ROOT = Path(os.getenv("DATA_ROOT"))
 
 
 def parse_args():
@@ -53,7 +48,7 @@ def remove_with_elevation(directory_path: Path) -> None:
 def main():
     args = parse_args()
     dry_run_text = " (dry run)" if args.dry_run else ""
-    for model_dir in (DATA_ROOT / "models/cellpose").glob("cellpose*/"):
+    for model_dir in Path("data/models/cellpose").glob("cellpose*/"):
         model_path = model_dir / "models" / model_dir.name
         if not model_path.exists():
             if not args.dry_run:

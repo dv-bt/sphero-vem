@@ -78,7 +78,7 @@ def read_tensor(
     dtype: torch.dtype | None = torch.float32,
     ds_factor: int = 1,
     resample_mode: str = "bilinear",
-    return_4d: bool = True,
+    return_4d: bool = False,
 ) -> torch.Tensor:
     """Read a tiff image as a pytorch tensor. Returns a tensor of the same shape as
     the image.
