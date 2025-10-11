@@ -4,7 +4,7 @@ This module contains functions and classes used for segmentation
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 import logging
 import json
 from datetime import datetime
@@ -16,16 +16,22 @@ from cellpose import models, train, io, metrics
 import torch
 import numpy as np
 import pandas as pd
-from sphero_vem.io import read_tensor, imwrite
-from sphero_vem.utils import get_file_info, read_manifest, timestamp
+from sphero_vem.io import read_tensor, imwrite, read_stack
+from sphero_vem.utils import (
+    get_file_info,
+    read_manifest,
+    timestamp,
+    generate_manifest,
+    vprint,
+)
 
 
 @dataclass
-class CellposeConfig:
+class FinetuneConfig:
     """Configuration class for fine-tuning cellpose"""
 
     dir_labeled: Path | str
-    downscaling: int = 10
+    downscaling: int = 1
     learning_rate: float = 5e-5
     batch_size: int = 8
     n_epochs: int = 100
@@ -37,8 +43,8 @@ class CellposeConfig:
     dry_run: bool = False
 
     # Parameters that are initialized by post_init
-    model_name: str = field(init=False)
     data_root: Path = field(init=False)
+    model_name: str = field(init=False)
     dir_experiment: Path = field(init=False)
     dir_predictions: Path = field(init=False)
     wandb_api_key: str = field(init=False)
@@ -52,19 +58,18 @@ class CellposeConfig:
         elif self.seg_target == "nuclei":
             self.wandb_project = "nuclei-segmentation"
         self.wandb_api_key = os.getenv("API_KEY")
-        self.data_root = Path(os.getenv("DATA_ROOT"))
+        self.data_root = Path("data")
 
-        self.model_name = (
-            f"cellposeSAM-{self.seg_target}-ds{self.downscaling}-{timestamp()}"
-        )
-        self.dir_labeled = self.data_root / self.dir_labeled
-        self.dir_experiment = self.data_root / "models/cellpose" / self.model_name
+        ds_text = f"-ds{self.downscaling}" if self.downscaling else ""
+        self.model_name = f"cellposeSAM-{self.seg_target}{ds_text}-{timestamp()}"
+        self.dir_labeled = self.dir_labeled
+        self.dir_experiment = Path(f"data/models/cellpose/{self.model_name}")
         if not self.dry_run:
             self.dir_experiment.mkdir(parents=True, exist_ok=True)
 
         if self.save_predictions:
-            self.dir_predictions = (
-                self.data_root / "processed/segmented/finetuning" / self.model_name
+            self.dir_predictions = Path(
+                f"data/processed/segmented/finetuning/{self.model_name}"
             )
             if not self.dry_run:
                 self.dir_predictions.mkdir(parents=True, exist_ok=True)
@@ -92,7 +97,7 @@ class CellposeConfig:
 
 
 def _generate_training_manifest(
-    config: CellposeConfig,
+    config: FinetuneConfig,
     train_files: list[Path],
     test_files: list[Path],
 ):
@@ -119,17 +124,18 @@ def _generate_training_manifest(
         training_manifest["test_files"].append(file_info)
 
     # For now keep it manual, consider automating step recognition.
-    preprocessing = [
-        {
-            "step": "downscaling",
-            "factor": config.downscaling,
-            "factor_eff": config.downscaling_eff,
-            "normalization": None,
-        }
-    ]
+    if config.downscaling:
+        preprocessing = [
+            {
+                "step": "downscaling",
+                "factor": config.downscaling,
+                "factor_eff": config.downscaling_eff,
+                "normalization": None,
+            }
+        ]
 
-    for preprocessing_step in preprocessing:
-        training_manifest["preprocessing_training"].append(preprocessing_step)
+        for preprocessing_step in preprocessing:
+            training_manifest["preprocessing_training"].append(preprocessing_step)
 
     # Save manifest locally and send to WandB
     manifest_path = config.dir_experiment / "training_manifest.json"
@@ -166,7 +172,7 @@ class _CellposeLogHandler(logging.Handler):
 
 
 class CellposeLogger:
-    def __init__(self, config: CellposeConfig) -> None:
+    def __init__(self, config: FinetuneConfig) -> None:
         # Activate Cellpose logging
         io.logger_setup()
         self._init_wandb(config)
@@ -176,7 +182,7 @@ class CellposeLogger:
         self.cellpose_logger = logging.getLogger("cellpose.train")
         self.cellpose_logger.addHandler(self.wandb_handler)
 
-    def _init_wandb(self, config: CellposeConfig) -> None:
+    def _init_wandb(self, config: FinetuneConfig) -> None:
         """Initialize WandB logging"""
         wandb.login(key=config.wandb_api_key)
 
@@ -212,7 +218,7 @@ class CellposeLogger:
             )
 
 
-def split_dataset(config: CellposeConfig) -> tuple[list[Path], list[Path]]:
+def split_dataset(config: FinetuneConfig) -> tuple[list[Path], list[Path]]:
     """Split segmentation data into train and test datasets. This function only
     considers images that also have labels
 
@@ -242,7 +248,7 @@ def split_dataset(config: CellposeConfig) -> tuple[list[Path], list[Path]]:
 
 
 def load_data(
-    config: CellposeConfig, image_files: list[Path]
+    config: FinetuneConfig, image_files: list[Path]
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Load images for training/testing as a list of arrays with corresponing labels.
 
@@ -286,12 +292,12 @@ def load_data(
     return data, labels
 
 
-def _labels_path(config: CellposeConfig, image_path: Path) -> Path:
+def _labels_path(config: FinetuneConfig, image_path: Path) -> Path:
     """Generate expected label path for a given image"""
     return config.dir_labeled / f"labels/{image_path.stem}-{config.seg_target}.tif"
 
 
-def finetune_cellpose(config: CellposeConfig):
+def finetune_cellpose(config: FinetuneConfig):
     """
     Finetune a Cellpose model using the parameters in the configuration.
 
@@ -414,3 +420,95 @@ def match_predictions(ground_truth: np.ndarray, predictions: np.ndarray) -> np.n
     predictions_matched[predictions_matched > 0] -= predictions.max()
 
     return predictions_matched
+
+
+@dataclass
+class SegmentationParams:
+    """Parameters passed to the segmentation function"""
+
+    batch_size: int = 64
+    flow3D_smooth: int = 0
+    cellprob_threshold: float = 0.0
+    min_size: int = 100
+    tile_overlap: float = 0.1
+    niter: int = 200
+    flow_threshold: float = 0.4
+    augment: bool = False
+
+
+@dataclass
+class SegmentationConfig:
+    """Segment a volume stack using cellpose"""
+
+    data_dir: Path
+    model: str
+    seg_params: SegmentationParams
+    verbose: bool = True
+    compute_stats: bool = False
+
+    dataset: str = field(init=False)
+    seg_target: str = field(init=False)
+    model_dir: Path = field(init=False)
+    out_dir: Path = field(init=False)
+    out_path: Path = field(init=False)
+
+    def __post_init__(self):
+        self.dataset = re.search(r"(Au_\d+-vol_\d+)", str(self.data_dir)).group(1)
+        self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
+        self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
+        self.out_dir = Path(
+            f"data/processed/segmented/{self.dataset}/{self.seg_target}-run{timestamp()}"
+        )
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.out_path = self.out_dir / f"{self.dataset}-{self.seg_target}.tif"
+
+
+def segment_stack(config: SegmentationConfig) -> None:
+    """Segment volume stack using config as input"""
+    seg_params = asdict(config.seg_params)
+
+    processing = [
+        {
+            "step": "segmentation",
+            "model": config.model,
+            "seg_target": config.seg_target,
+            **seg_params,
+        }
+    ]
+
+    generate_manifest(
+        config.dataset,
+        config.out_dir,
+        sorted(config.data_dir.glob("*.tif")),
+        processing,
+    )
+
+    volume_stack = read_stack(config.data_dir, verbose=config.verbose)
+    cellpose_model = models.CellposeModel(gpu=True, pretrained_model=config.model_dir)
+
+    time_start = datetime.now()
+    vprint(f"Starting segmentation at {time_start}", config.verbose)
+
+    with torch.inference_mode():
+        masks, _, _ = cellpose_model.eval(
+            volume_stack, do_3D=True, channel_axis=1, z_axis=0, **seg_params
+        )
+
+    # Compute masks statistics
+    if config.compute_stats:
+        ninst = int(masks.max())
+        volumes = np.bincount(masks.ravel())[1:] if ninst else np.array([np.nan])
+        # Equivalent diameter in micrometers, assuming 100 nm pixel size
+        diams = 2 * (volumes * 3 / (4 * np.pi)) ** (1 / 3) * 0.1
+        np.savez(config.out_dir / "masks_stats.npz", volume=volumes, diameter=diams)
+
+    # Ensure GPU memory is garbage collected
+    cellpose_model.net.to("cpu")
+    del cellpose_model
+    torch.cuda.empty_cache()
+
+    time_finish = datetime.now()
+    vprint(f"Completed segmentation at {time_finish}", config.verbose)
+    vprint(f"Elapsed time: {time_finish - time_start}", config.verbose)
+
+    imwrite(config.out_path, masks, uncompressed=False)

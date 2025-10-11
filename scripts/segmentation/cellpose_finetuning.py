@@ -4,12 +4,12 @@ Script to finetune segmentation for cells or nuclei using CellposeSAM on our dat
 
 from dotenv import load_dotenv
 import tyro
-from sphero_vem.segmentation import CellposeConfig, finetune_cellpose
+from sphero_vem.segmentation import FinetuneConfig, finetune_cellpose
 
 
 def main():
     load_dotenv(".env")
-    config = tyro.cli(CellposeConfig)
+    config = tyro.cli(FinetuneConfig)
     finetune_cellpose(config)
 
 

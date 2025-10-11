@@ -58,7 +58,9 @@ def write_stack(data_dir: Path, out_file: Path, channel_axis: bool = False) -> N
     tifffile.imwrite(out_file, volume_stack)
 
 
-def read_stack(data_dir: Path, channel_axis: bool = False) -> np.ndarray:
+def read_stack(
+    data_dir: Path, channel_axis: bool = False, verbose: bool = True
+) -> np.ndarray:
     """Sequentially read images in directory and merge them into a 3D stack with shape
     ZYX. If the channel_axis option is on, a channel dimension of size 1 is added to have
     shape ZCYX"""
@@ -67,7 +69,9 @@ def read_stack(data_dir: Path, channel_axis: bool = False) -> np.ndarray:
     first_image = tifffile.imread(image_list[0])
     image_shape = (1, *first_image.shape) if channel_axis else first_image.shape
     volume_stack = np.empty((len(image_list), *image_shape), first_image.dtype)
-    for i, image_path in enumerate(tqdm(image_list, "Reading slices")):
+    for i, image_path in enumerate(
+        tqdm(image_list, "Reading slices", disable=not verbose)
+    ):
         image = tifffile.imread(image_path).reshape(*image_shape)
         volume_stack[i] = image
     return volume_stack

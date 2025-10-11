@@ -350,14 +350,14 @@ wandb = ["wandb"]
 
 [[package]]
 name = "cellpose"
-version = "4.0.6"
+version = "4.0.7"
 description = "anatomical segmentation algorithm"
 optional = false
 python-versions = "*"
 groups = ["main"]
 files = [
-    {file = "cellpose-4.0.6-py3-none-any.whl", hash = "sha256:bf79e98261d7c6a9bdbd9494283125cc4ac930f2ffa6d86c147f4b8fcb6ac9e8"},
-    {file = "cellpose-4.0.6.tar.gz", hash = "sha256:df12786f6e58118e7ab76e8857c3167567601f48ea852d316a36402104e27273"},
+    {file = "cellpose-4.0.7-py3-none-any.whl", hash = "sha256:1cab108744ab95c6df1928b8624e527d1c1822a85e643771edd336f1bad1b2dd"},
+    {file = "cellpose-4.0.7.tar.gz", hash = "sha256:a794fcb442e4f933ebbd79864eba8ca24a74c2c21a752a30d173eac36837ead3"},
 ]
 
 [package.dependencies]
