@@ -9,7 +9,7 @@ import pandas as pd
 import tifffile
 import numpy as np
 from dotenv import load_dotenv
-from sphero_vem.io import imwrite
+from sphero_vem.io import write_image
 
 # Common variables
 load_dotenv(".env")
@@ -33,7 +33,7 @@ def main():
                 bbox.BX : bbox.BX + bbox.Width,
             ]
             np.ascontiguousarray(image_crop, dtype=np.uint8)
-            imwrite(
+            write_image(
                 file_path.parent / f"{file_path.stem}-{bbox.crop_ix:02d}.tif",
                 image_crop,
             )

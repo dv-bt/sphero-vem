@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import shutil
 from sphero_vem.utils import read_manifest, generate_manifest
-from sphero_vem.io import read_stack, read_tensor, imwrite
+from sphero_vem.io import read_stack, read_tensor, write_image
 
 
 def main():
@@ -48,7 +48,7 @@ def main():
         image = read_tensor(
             image_path, dtype=None, ds_factor=ds_factor, return_4d=False
         )
-        imwrite(image_path, image.numpy(), uncompressed=True)
+        write_image(image_path, image.numpy(), compressed=False)
 
     for label_path in (out_dir / "labels").glob("*.tif"):
         labels = read_tensor(
@@ -58,7 +58,7 @@ def main():
             resample_mode="nearest",
             return_4d=False,
         )
-        imwrite(label_path, labels.numpy(), uncompressed=False)
+        write_image(label_path, labels.numpy(), compressed=True)
 
     stack = read_stack(aligned_dir)
 
@@ -75,7 +75,7 @@ def main():
     for idx in subset_indices:
         slice = stack[:, idx, :]
         slice_name = f"Au_01-vol_01-y_{idx:04}-virt.tif"
-        imwrite(out_dir / slice_name, slice)
+        write_image(out_dir / slice_name, slice)
         virtual_paths.append(aligned_dir / slice_name)
 
     # YZ slices
@@ -87,7 +87,7 @@ def main():
     for idx in subset_indices:
         slice = stack[:, :, idx]
         slice_name = f"Au_01-vol_01-x_{idx:04}-virt.tif"
-        imwrite(out_dir / slice_name, slice)
+        write_image(out_dir / slice_name, slice)
         virtual_paths.append(aligned_dir / slice_name)
 
     images = [Path("data") / i for i in manifest_labels["inputs"]] + virtual_paths

@@ -10,7 +10,7 @@ import datetime
 from tqdm import tqdm
 from pathlib import Path
 from dotenv import load_dotenv
-from sphero_vem.io import imread_downscaled, imwrite
+from sphero_vem.io import imread_downscaled, write_image
 from sphero_vem.utils import read_section_errors
 
 
@@ -79,7 +79,7 @@ def main():
             if error_tiles and (image_path.name in error_tiles):
                 continue
             image = imread_downscaled(image_path, factor)
-            imwrite(out_dir / image_path.name, image)
+            write_image(out_dir / image_path.name, image, compressed=False)
 
 
 if __name__ == "__main__":

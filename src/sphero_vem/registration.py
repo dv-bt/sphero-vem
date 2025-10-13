@@ -17,7 +17,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm, trange
 import tifffile
-from sphero_vem.io import imwrite, read_tensor
+from sphero_vem.io import write_image, read_tensor
 from sphero_vem.metrics import LossDispatcher
 from sphero_vem.preprocessing import downscale_tensor
 from sphero_vem.utils import generate_manifest, detect_torch_device, infer_dataset
@@ -175,7 +175,7 @@ def register_to_disk_itk(
     )
     final_image = sitk.Cast(final_image, sitk.sitkUInt8)
     final_image_array = sitk.GetArrayViewFromImage(final_image)
-    imwrite(dest_path, final_image_array, uncompressed=True)
+    write_image(dest_path, final_image_array, compressed=False)
 
 
 def _affine_transform(q: torch.Tensor) -> torch.Tensor:

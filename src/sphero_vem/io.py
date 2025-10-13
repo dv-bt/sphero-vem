@@ -8,19 +8,19 @@ import tifffile
 from sphero_vem.preprocessing import downscale_image, downscale_labels, downscale_tensor
 
 
-def imwrite(
-    fname: Path, image: np.ndarray, uncompressed: bool = True, **kwargs
+def write_image(
+    fname: Path, image: np.ndarray, compressed: bool = False, **kwargs
 ) -> None:
-    """Save TIFF images with default zip compression. Compression can be disabled
-    with the uncompressed argument. This also disables any other optional keyword
+    """Save TIFF images with default zip compression. Compression can be enabled
+    with the compressed argument. This also disables any other optional keyword
     argument passed"""
-    defaults = {
+    default_compression = {
         "compression": "zlib",
         "compressionargs": {"level": 6},
         "predictor": 2,
         "tile": (256, 256),
     }
-    options = {**defaults, **kwargs} if not uncompressed else {}
+    options = {**default_compression, **kwargs} if compressed else {}
     return tifffile.imwrite(fname, image, **options)
 
 

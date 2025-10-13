@@ -16,7 +16,7 @@ from cellpose import models, train, io, metrics
 import torch
 import numpy as np
 import pandas as pd
-from sphero_vem.io import read_tensor, imwrite, read_stack
+from sphero_vem.io import read_tensor, write_image, read_stack
 from sphero_vem.utils import (
     get_file_info,
     read_manifest,
@@ -340,10 +340,11 @@ def finetune_cellpose(config: FinetuneConfig):
     if config.save_predictions:
         for i, image in enumerate(test_data):
             masks = cellpose_model.eval(image)
-            imwrite(
+            write_image(
                 config.dir_predictions
                 / f"{test_files[i].stem}-{config.seg_target}.tif",
                 masks[0],
+                compressed=True,
             )
 
 
@@ -511,4 +512,4 @@ def segment_stack(config: SegmentationConfig) -> None:
     vprint(f"Completed segmentation at {time_finish}", config.verbose)
     vprint(f"Elapsed time: {time_finish - time_start}", config.verbose)
 
-    imwrite(config.out_path, masks, uncompressed=False)
+    write_image(config.out_path, masks, compressed=True)

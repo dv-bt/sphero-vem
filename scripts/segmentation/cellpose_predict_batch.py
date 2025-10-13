@@ -13,7 +13,7 @@ import shutil
 from dotenv import load_dotenv
 from cellpose.models import CellposeModel
 from sphero_vem.segmentation import calculate_ap, extract_seg_target
-from sphero_vem.io import imread_downscaled, imwrite, imread_labels_downscaled
+from sphero_vem.io import imread_downscaled, write_image, imread_labels_downscaled
 from tqdm import tqdm
 import tifffile
 
@@ -153,7 +153,7 @@ def main():
                 ground_truth = imread_labels_downscaled(gt_path, ds_factor)
                 cellpose_model = load_cellpose_model(cellpose_model, model_path)
                 output = cellpose_model.eval(image)
-                imwrite(masks_path, output[0])
+                write_image(masks_path, output[0], compressed=True)
             results_path = masks_path.parent / f"{masks_path.stem}-ap.csv"
             if not results_path.exists() or args.force_ap:
                 ground_truth = imread_labels_downscaled(gt_path, ds_factor)

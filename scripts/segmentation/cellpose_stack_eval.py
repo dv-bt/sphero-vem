@@ -72,12 +72,17 @@ def eval_stack(stack_dir: Path, labels_dir: Path) -> pd.DataFrame:
 
 def main() -> None:
     stack_root = Path("data/processed/segmented/Au_01-vol_01")
-    labels_dir = Path("data/processed/labeled/Au_01-vol_01/labeled-02/labels")
+    labels_dir = Path("data/processed/labeled/Au_01-vol_01/labeled-03/labels")
     stacks = list(stack_root.glob("*/"))
     for stack_dir in tqdm(stacks, "Evaluating predictions"):
         try:
             results = eval_stack(stack_dir, labels_dir)
             results.to_csv(stack_dir / "segmentation_results.csv", index=False)
+            merged_dir = stack_dir / "merged-labels"
+            # If separate merged labels, perform evaluation also on those
+            if merged_dir.exists():
+                results = eval_stack(merged_dir, labels_dir)
+                results.to_csv(merged_dir / "segmentation_results.csv", index=False)
         except (FileNotFoundError, TypeError):
             continue
 

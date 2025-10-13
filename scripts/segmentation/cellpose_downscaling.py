@@ -6,7 +6,7 @@ of image downscaling
 import os
 import time
 from pathlib import Path
-from sphero_vem.io import imread_downscaled, imread_labels_downscaled, imwrite
+from sphero_vem.io import imread_downscaled, imread_labels_downscaled, write_image
 from sphero_vem.segmentation import calculate_ap
 from dotenv import load_dotenv
 from cellpose.models import CellposeModel
@@ -58,7 +58,7 @@ def main() -> None:
                 results = calculate_ap(ground_truth, predictions, 0.01)
 
                 pred_path = results_dir / gt_path.name
-                imwrite(pred_path, predictions)
+                write_image(pred_path, predictions, compressed=True)
 
                 results_path = results_dir / f"{gt_path.stem}-ap.csv"
                 results.to_csv(results_path, index=False)
