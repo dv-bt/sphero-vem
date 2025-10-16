@@ -176,3 +176,13 @@ def infer_dataset(data_dir: Path) -> str:
     """Infer dataset name from the name of images in the data directory"""
     image_name = list(data_dir.glob("*.tif"))[0].name
     return image_name[: image_name.rfind("-z_")]
+
+
+def get_seg_params(dir: Path) -> dict:
+    """Extract segmentation parameters from the manifest"""
+    manifest = read_manifest(dir)
+    seg_params = {}
+    for step in manifest.get("processing", {}):
+        if step.get("step") == "segmentation":
+            seg_params = step
+    return seg_params

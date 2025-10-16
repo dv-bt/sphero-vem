@@ -11,16 +11,7 @@ import numpy as np
 import pandas as pd
 from tifffile import imread
 from cellpose import metrics
-from sphero_vem.utils import read_manifest
-
-
-def get_seg_params(dir: Path) -> dict:
-    manifest = read_manifest(dir)
-    seg_params = {}
-    for step in manifest.get("processing"):
-        if step["step"] == "segmentation":
-            seg_params = step
-    return seg_params
+from sphero_vem.utils import get_seg_params
 
 
 def eval_stack(stack_dir: Path, labels_dir: Path) -> pd.DataFrame:
