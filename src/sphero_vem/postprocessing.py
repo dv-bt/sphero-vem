@@ -4,7 +4,7 @@ Postprocessing functions
 
 import numpy as np
 import scipy.ndimage as ndi
-from skimage import graph, segmentation
+from skimage import graph
 
 
 def merge_labels(
@@ -15,7 +15,6 @@ def merge_labels(
     edge_thresh: float = 0.15,
     sphericity_thresh: float | None = None,
     sigma: int = 1,
-    remove_background: bool = True,
 ) -> tuple[np.ndarray, graph.RAG]:
     """
     Merge adjacent labeled regions based on boundary strength and relative contact area.
@@ -60,8 +59,6 @@ def merge_labels(
         Pixel connectivity used when constructing the RAG (e.g. 1 for 4-connectivity,
         2 for 8-connectivity in 2D). Forwarded to the underlying RAG constructor.
         Default is 2.
-    remove_background : bool, optional
-        Remove background label (0). Default is True.
 
     Returns
     -------
@@ -94,38 +91,44 @@ def merge_labels(
         edge_map = np.clip((edge_map - p1) / (p99 - p1), 0, 1)
 
     # Relabel labels sequentially
-    labels, fwd, inv = segmentation.relabel_sequential(labels)
     rag = graph.rag_boundary(labels, edge_map, connectivity=1)
 
     # Calculate total surface per node
     total_surface = calc_surface(rag)
     label_volume = calc_volume(labels)
 
-    if remove_background and 0 in rag:
-        rag.remove_node(0)
+    def _rel_contact(node: int, edge_data: dict) -> float:
+        """Edge contact relative to total label surface"""
+        edge_contact = int(edge_data.get("count", 0))
+        tot_surface = total_surface.get(node, 0) or 1
+        return float(edge_contact / tot_surface)
+
+    def _sphericity(node: int) -> float:
+        """Label sphericity. Assign sphericity np.nan to background"""
+        surface = total_surface.get(node, 0) or 1
+        volume = label_volume.get(node)
+        return calc_sphericity(surface, volume) if node != 0 else np.nan
 
     # Calculate edge contact area relative to total label area and minimum sphericity
     # per label
     for u, v, d in rag.edges(data=True):
-        iface = int(d.get("count", 0))
-        su = total_surface.get(u, 0) or 1
-        sv = total_surface.get(v, 0) or 1
-        rel_u = iface / su
-        rel_v = iface / sv
-        d["rel_contact_max"] = float(max(rel_u, rel_v))
+        rel_u = _rel_contact(u, d)
+        rel_v = _rel_contact(v, d)
+        d["rel_contact_max"] = max(rel_u, rel_v)
 
-        vu = label_volume.get(u)
-        vv = label_volume.get(v)
-        sph_u = calc_sphericity(su, vu)
-        sph_v = calc_sphericity(sv, vv)
-        d["min_sphericity"] = min(sph_u, sph_v)
+        sph_u = _sphericity(u)
+        sph_v = _sphericity(v)
+        d["min_sphericity"] = np.nanmin([sph_u, sph_v])
 
     # Make edge unmergeable if the contact area is below the threshold, then optionally
     # consider only edges that connect to at least a node with a sphericity lower than
-    # the set threshold
+    # the set threshold.
+    # Edges with the background node are also set to unmergeable.
     rag_th = rag.copy()
-    for _, _, d in rag_th.edges(data=True):
-        if d["rel_contact_max"] < rel_contact_thresh:
+    for u, v, d in rag_th.edges(data=True):
+        if (u == 0) or (v == 0):
+            d["weight"] = 1.0
+        elif d["rel_contact_max"] < rel_contact_thresh:
             d["weight"] = 1.0
         elif sphericity_thresh and (d["min_sphericity"] > sphericity_thresh):
             d["weight"] = 1.0
