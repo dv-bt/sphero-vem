@@ -74,7 +74,7 @@ def main() -> None:
             if merged_dir.exists():
                 results = eval_stack(merged_dir, labels_dir)
                 results.to_csv(merged_dir / "segmentation_results.csv", index=False)
-        except (FileNotFoundError, TypeError):
+        except (FileNotFoundError, TypeError, ValueError):
             continue
 
 

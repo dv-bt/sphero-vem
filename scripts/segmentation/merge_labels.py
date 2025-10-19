@@ -20,7 +20,7 @@ def compute_edges(image: np.ndarray, sigma: int) -> np.ndarray:
 
 
 def main() -> None:
-    stack_dir = Path("data/processed/aligned/Au_01-vol_01/downscaled/downscaled-2")
+    stack_dir = Path("data/processed/aligned/Au_01-vol_01/downscaled/downscaled-10")
     label_root = Path("data/processed/segmented/Au_01-vol_01")
 
     # Merge parameters
