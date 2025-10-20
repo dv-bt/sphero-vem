@@ -111,8 +111,32 @@ def generate_manifest(
     processing: list[dict],
     **extra_fields,
 ) -> dict:
-    """Generate manifest.yaml file with processing steps and returns it as a
-    dictionary"""
+    """Generate manifest.yaml file with processing steps and saves it.
+
+    For correct results, this should be called after processing is complete. Output
+    image list is read from the directory and sorted, assuming the ordering is
+    maintained to establish a correspondence.
+
+    Parameters
+    ----------
+    dataset : str
+        The dataset name.
+    out_dir : Path
+        The output directory containing the output images and where the manifest will
+        be saved.
+    images : list[Path]
+        A list containing the input images.
+    processing : list[dict]
+        A list of dictionaries containing the processing steps in the order they were
+        executed. Each dictionary contains the relevant parameters for that processing
+        step, and should contain the key 'step' where the processing step is specifyied
+        with a string.
+
+    Returns
+    -------
+    dict
+        The generate manifest
+    """
 
     data_dir = images[0].parent
     data_root = _find_data_root(data_dir)
@@ -122,8 +146,8 @@ def generate_manifest(
         "dataset": dataset,
         "generated_on": datetime.now().isoformat(),
         "processing": old.get("processing", []) + processing,
-        "inputs": [str(p.relative_to(data_root)) for p in images],
-        "outputs": [str(p.name) for p in images],
+        "inputs": [str(p.relative_to(data_root)) for p in sorted(images)],
+        "outputs": [str(p.name) for p in sorted(out_dir.glob("*.tif"))],
         **extra_fields,
     }
 
