@@ -11,101 +11,299 @@ from sphero_vem.io import write_image
 from sphero_vem.utils import generate_manifest
 
 
-def border_mask(image: np.ndarray, border_val: int = 0) -> np.ndarray:
+def border_mask(image: np.ndarray) -> np.ndarray:
     """
-    Return a boolean mask of values that belong to components touching the image border.
-    """
-    zero = image == border_val
-    labels = measure.label(zero, connectivity=1)
-    H, W = image.shape[:2]
+    Return a boolean mask of elements that belong to components touching the image border.
 
-    touching = set()
-    touching.update(np.unique(labels[0, :]))
-    touching.update(np.unique(labels[H - 1, :]))
-    touching.update(np.unique(labels[:, 0]))
-    touching.update(np.unique(labels[:, W - 1]))
-
-    touching.discard(0)
-    if not touching:
-        return np.zeros_like(zero, dtype=bool)
-
-    mask = np.isin(labels, list(touching))
-    return mask
-
-
-def max_inscribed_rectangle(image: np.ndarray) -> tuple[int, int, int, int]:
-    """
-    Find maximum-area axis-aligned rectangle that avoids border-touching black pixels.
-
-    The function uses an area under histogram approach with a monotonic stack algortithm.
 
     Parameters
     ----------
     image : np.ndarray
-        The image to be cropped.
+        The image is assumed to be a np.uint8 grayscale image, and border pixels are
+        those with values 0 or 255 (255 is present due to re sampling artifacts).
+        Interior islands with these values are excluded.
 
     Returns
     -------
-    (top, bottom, left, right)
-        Indices for slicing the image. Bottom and right are calculated to be exclusive.
+    np.ndarray
+        Boolean mask where True is border and False is image content.
     """
-    border_zero = border_mask(image)
-    valid = ~border_zero
+    masked = (image == 0) | (image == 255)
+    labeled = measure.label(masked, connectivity=1)
 
-    H, W = valid.shape
-    heights = np.zeros(W, dtype=int)
+    # Collect component ids that touch any border
+    touching = set()
+    touching.update(np.unique(labeled[0, :]))
+    touching.update(np.unique(labeled[image.shape[-2] - 1, :]))
+    touching.update(np.unique(labeled[:, 0]))
+    touching.update(np.unique(labeled[:, image.shape[-1] - 1]))
 
-    best_area = 0
-    # (top, bottom, left, right)
-    best_crop = (0, 0, 0, 0)
+    # Remove background label
+    touching.discard(0)
+    if not touching:
+        return np.zeros_like(image, dtype=bool)
 
-    for r in range(H):
-        row = valid[r]
-        heights = np.where(row, heights + 1, 0)
-        stack = []
-        c = 0
-        while c <= W:
-            h = heights[c] if c < W else 0
-            if not stack or h >= heights[stack[-1]]:
-                stack.append(c)
-                c += 1
-            else:
-                top = stack.pop()
-                height = heights[top]
-                left_idx = stack[-1] + 1 if stack else 0
-                width = c - left_idx
-                area = height * width
-                if area > best_area:
-                    best_area = area
-                    top_row = r - height + 1
-                    bottom_row = r + 1
-                    left_col = left_idx
-                    right_col = left_idx + width
-                    best_crop = (top_row, bottom_row, left_col, right_col)
+    border_mask = np.isin(labeled, list(touching))
+    return border_mask
 
-    return best_crop
+
+def integral_image(mask: np.ndarray) -> np.ndarray:
+    """
+    Computes the integral image (summed-area table) of a mask.
+
+    The output is padded with a 1-pixel border of zeros on the top and left to allow for
+    easier calculation.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean mask where True is border and False is image content, of size (H, W)
+
+    Returns
+    -------
+    np.ndarray
+        Padded integral image of mask, with size (H + 1, W + 1)
+    """
+    H, W = mask.shape
+    ii_padded = np.zeros((H + 1, W + 1), dtype=mask.dtype)
+    ii_padded[1:, 1:] = mask
+    return ii_padded.cumsum(0).cumsum(1)
+
+
+def refine_crop(
+    ii: np.ndarray, up: int, down: int, left: int, right: int, rng: int | None = None
+) -> tuple[int, int, int, int]:
+    """
+    Randomized hill climb for finding the largest border-free box in an image.
+
+    Each iteration shuffles the order of side expansions, and expands only if the
+    rectangle stays clean.
+
+    Paramters
+    ---------
+    ii : np.ndarray
+        An integral image obtained from a masked array where 0=content and 1=border.
+    up, down, left, right : int
+        Initial indices for the search. They must already index a clean box.
+    rng : int | None
+        Optional seed for random number generator. Default if None
+
+    Returns
+    -------
+    up, down, left, right : int
+        The updated indices.
+    """
+    rng = np.random.default_rng(rng)
+
+    improved = True
+    while improved:
+        improved = False
+
+        def try_expand_up():
+            nonlocal up, improved
+            if up > 0 and rect_sum(ii, up - 1, down, left, right) == 0:
+                up -= 1
+                improved = True
+
+        def try_expand_down():
+            nonlocal down, improved
+            if down < ii.shape[0] - 1 and rect_sum(ii, up, down + 1, left, right) == 0:
+                down += 1
+                improved = True
+
+        def try_expand_left():
+            nonlocal left, improved
+            if left > 0 and rect_sum(ii, up, down, left - 1, right) == 0:
+                left -= 1
+                improved = True
+
+        def try_expand_right():
+            nonlocal right, improved
+            if right < ii.shape[1] - 1 and rect_sum(ii, up, down, left, right + 1) == 0:
+                right += 1
+                improved = True
+
+        moves = [try_expand_up, try_expand_down, try_expand_left, try_expand_right]
+        rng.shuffle(moves)
+        for move in moves:
+            move()
+
+    return up, down, left, right
+
+
+def rect_sum(ii_padded: np.ndarray, up: int, down: int, left: int, right: int) -> int:
+    """
+    Calculates the sum of a rectangle from a padded integral image. [u:d, l:r)
+    """
+    return (
+        ii_padded[down, right]
+        - ii_padded[up, right]
+        - ii_padded[down, left]
+        + ii_padded[up, left]
+    )
+
+
+def rough_crop_search(
+    ii: np.ndarray, pix_stride: int = 20
+) -> tuple[int, int, int, int]:
+    """Return the indices for a clean square crop of the original image.
+
+    This function performs a rough search by shrinking a square box and checking if the
+    integral image is 0.
+
+    Parameters
+    ----------
+    ii : np.ndarray
+        A padded integral image, such as that generated by integral_image.
+    pix_stride : int
+        The stride of the shrinking search. Default is 20.
+
+    Returns
+    -------
+    (up, down, left, right) : tuple[int]
+        The indices for the largest clean box found with the given stride.
+    """
+    for rough_crop in range(0, 500, pix_stride):
+        crop_box = (
+            rough_crop,
+            ii.shape[0] - rough_crop,
+            rough_crop,
+            ii.shape[1] - rough_crop,
+        )
+        summed = rect_sum(ii, *crop_box)
+        if summed == 0:
+            return crop_box
+
+
+def area(box):
+    """Helper function to calculate the area of a bounding box from its indices as
+    (up, down, left, right)."""
+    return (box[1] - box[0]) * (box[3] - box[2])
+
+
+def refine_crop_multistart(
+    ii: np.ndarray,
+    seed_box: tuple[int, int, int, int],
+    n_restarts: int = 10,
+    jitter: int = 10,
+    rng: int | None = None,
+) -> tuple[int, int, int, int]:
+    """
+    Find the crop in an integral image that is free of border pixels with multiple
+    restarts.
+
+    Multiple restarts are used to reduce the chances of being stuck in a local minimum.
+    At each restart the clean starting seed_box is jittered to have a different start.
+    If no rng seed is passed, each iteration will have a different order of
+    exploration.
+
+    Parameters
+    ----------
+    ii : np.ndarray
+        An integral image obtained from a masked array where 0=content and 1=border.
+        The integral image should be padded with one row/column of 0 at the top/left,
+        such as those produced by integral_image.
+    seed_box : tuple[int, int, int, int]
+        A tuple of indices for a clean crop that will be used to initialize the search.
+        Indices order are (up, down, left, right).
+    n_restarts : int
+        The number of restarts for the multistart approach. Default is 10.
+    jitter : int
+        Range of the random jitter added to seed_box at each restart. If jittering
+        produces an invalid startng crop (i.e. one that contains border pixels), it
+        will be discarded and a new one will be generated. Default is 10.
+    rng : int | None
+        Optional seed for random number generator. This will be used for both the
+        jitter and passed internally to refine_crop. Default if None.
+
+
+    Resalts
+    -------
+    (up, down, left, right) : tuple[int]
+        The best indices found by the algorithm.
+    """
+    rng = np.random.default_rng(rng)
+
+    def jitter_h(idx: int) -> int:
+        """Add jitter to an integer index in height (up, down)"""
+        return min(ii.shape[0] - 1, idx + rng.integers(-jitter, jitter + 1))
+
+    def jitter_w(idx: int) -> int:
+        """Add jitter to an integer index in width (left, right)"""
+        return min(ii.shape[1] - 1, idx + rng.integers(-jitter, jitter + 1))
+
+    best_box = refine_crop(ii, *seed_box, rng=rng)
+    best_area = area(best_box)
+
+    up_0, down_0, left_0, right_0 = seed_box
+    for _ in range(n_restarts):
+        up = max(0, jitter_h(up_0))
+        down = max(up, jitter_h(down_0))
+        left = max(0, jitter_w(left_0))
+        right = max(left, jitter_w(right_0))
+
+        # Check if box is valid
+        if rect_sum(ii, up, down, left, right) != 0:
+            continue
+
+        cand_crop = refine_crop(ii, up, down, left, right, rng=rng)
+        cand_area = area(cand_crop)
+        if cand_area > best_area:
+            best_box, best_area = cand_crop, cand_area
+
+    return best_box
+
+
+def find_border_crop(
+    image: np.ndarray,
+    pix_stride: int = 20,
+    n_restarts: int = 10,
+    jitter: int = 10,
+    rng: int | None = None,
+) -> tuple[int, int, int, int]:
+    """Find the indices for cropping the black border of an image after registration
+
+    Full white (255) pixels are also included in the calculation due resmpling
+    artifacts.
+    """
+    masked = border_mask(image)
+    ii = integral_image(masked)
+    seed_box = rough_crop_search(ii, pix_stride)
+    crop_idx = refine_crop_multistart(
+        ii, seed_box, n_restarts=n_restarts, jitter=jitter, rng=rng
+    )
+    return crop_idx
 
 
 if __name__ == "__main__":
-    root = Path("data/processed/aligned/Au_01-vol_01/")
-    crop_dir = root / "cropped"
+    # Parameters
+    pix_stride = 20
+    n_restarts = 10
+    jitter = 10
+    safety_px = 5
+
+    aligned_dir = Path("data/processed/aligned/Au_01-vol_01")
+    crop_dir = Path("data/processed/cropped/Au_01-vol_01")
     crop_dir.mkdir(exist_ok=True, parents=True)
 
-    image_list = sorted(root.glob("*.tif"))
+    image_list = sorted(aligned_dir.glob("*.tif"))
     results = []
     for image_path in tqdm(image_list, "Analyzing images"):
         image = imread(image_path)
-        results.append(max_inscribed_rectangle(image))
+        results.append(
+            find_border_crop(
+                image, pix_stride=pix_stride, n_restarts=n_restarts, jitter=jitter
+            )
+        )
     crops = np.vstack(results)
 
     # Calculate the most restrictive crop and consider safety pixels to also include
     # potential artifacts from resampling
-    safety_px = 1
     min_crop = (
-        crops[:, 0].max() + safety_px,
-        crops[:, 1].min() - safety_px,
-        crops[:, 2].max() + safety_px,
-        crops[:, 3].min() + safety_px,
+        int(crops[:, 0].max() + safety_px),
+        int(crops[:, 1].min() - safety_px),
+        int(crops[:, 2].max() + safety_px),
+        int(crops[:, 3].min() + safety_px),
     )
     for image_path in tqdm(image_list, "Cropping images"):
         image = imread(image_path)
@@ -113,8 +311,17 @@ if __name__ == "__main__":
         write_image(crop_dir / image_path.name, cropped)
 
     generate_manifest(
-        dataset=root.name,
+        dataset=aligned_dir.name,
         out_dir=crop_dir,
         images=image_list,
-        processing=[{"step": "cropping", "crop": min_crop}],
+        processing=[
+            {
+                "step": "cropping",
+                "crop": min_crop,
+                "pix_stride": 20,
+                "n_restarts": 10,
+                "jitter": 10,
+                "safety_px": 5,
+            }
+        ],
     )
