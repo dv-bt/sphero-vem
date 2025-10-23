@@ -166,9 +166,9 @@ def rough_crop_search(
     for rough_crop in range(0, 500, pix_stride):
         crop_box = (
             rough_crop,
-            ii.shape[0] - rough_crop,
+            ii.shape[0] - 1 - rough_crop,
             rough_crop,
-            ii.shape[1] - rough_crop,
+            ii.shape[1] - 1 - rough_crop,
         )
         summed = rect_sum(ii, *crop_box)
         if summed == 0:
