@@ -446,20 +446,21 @@ class SegmentationConfig:
     seg_params: SegmentationParams
     verbose: bool = True
     compute_stats: bool = False
+    out_dir: Path | None = None
 
     dataset: str = field(init=False)
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
-    out_dir: Path = field(init=False)
     out_path: Path = field(init=False)
 
     def __post_init__(self):
         self.dataset = re.search(r"(Au_\d+-vol_\d+)", str(self.data_dir)).group(1)
         self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
         self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
-        self.out_dir = Path(
-            f"data/processed/segmented/{self.dataset}/{self.seg_target}-run{timestamp()}"
-        )
+        if not self.out_dir:
+            self.out_dir = Path(
+                f"data/processed/segmented/{self.dataset}/{self.seg_target}"
+            )
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.out_path = self.out_dir / f"{self.dataset}-{self.seg_target}.tif"
 
