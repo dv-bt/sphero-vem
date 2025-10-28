@@ -90,7 +90,6 @@ def merge_labels(
         p1, p99 = np.percentile(edge_map, (1, 99))
         edge_map = np.clip((edge_map - p1) / (p99 - p1), 0, 1)
 
-    # Relabel labels sequentially
     rag = graph.rag_boundary(labels, edge_map, connectivity=1)
 
     # Calculate total surface per node
