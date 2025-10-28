@@ -435,6 +435,7 @@ class SegmentationParams:
     niter: int = 200
     flow_threshold: float = 0.4
     augment: bool = False
+    anisotropy: float | None = None
 
 
 @dataclass
@@ -447,6 +448,7 @@ class SegmentationConfig:
     verbose: bool = True
     compute_stats: bool = False
     out_dir: Path | None = None
+    mode: str = "inference"
 
     dataset: str = field(init=False)
     seg_target: str = field(init=False)
@@ -458,9 +460,15 @@ class SegmentationConfig:
         self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
         self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
         if not self.out_dir:
-            self.out_dir = Path(
-                f"data/processed/segmented/{self.dataset}/{self.seg_target}"
-            )
+            if self.mode == "inference":
+                self.out_dir = Path(
+                    f"data/processed/segmented/{self.dataset}/{self.seg_target}"
+                )
+            elif self.mode == "param_optim":
+                self.out_dir = Path(
+                    "data/processed/segmented/optimization_3d/"
+                    f"{self.seg_target}-run{timestamp()}"
+                )
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.out_path = self.out_dir / f"{self.dataset}-{self.seg_target}.tif"
 
