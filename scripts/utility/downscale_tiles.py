@@ -32,6 +32,9 @@ def parse_args():
         action="store_true",
         help="Flag the tiles as labels and performs nearest neighbor interpolation",
     )
+    parser.add_argument(
+        "-i", "--isotropic", action="store_true", help="Enforce isotropic voxels"
+    )
     return parser.parse_args()
 
 
@@ -40,18 +43,27 @@ def main():
     factor = args.factor
     extra_fields = {}
     data_dir = args.source_dir
-    out_dir = data_dir / f"downscaled/downscaled-{factor}"
+    isotropic_text = "-isotropic" if args.isotropic else ""
+    out_dir = data_dir / f"downscaled/downscaled-{factor}{isotropic_text}"
     out_dir.mkdir(parents=True, exist_ok=True)
     images = sorted(data_dir.glob("*.tif"))
 
     # If factor 10, use every other image to have isotropic voxels (100 nm side)
-    if args.factor == 10:
-        section_errors = read_section_errors(data_dir)
-        all_images = sorted([image.name for image in images] + section_errors)
-        selected = all_images[::2]
-        discarded = all_images[1::2]
-        images = [data_dir / name for name in selected if name not in section_errors]
-        extra_fields["discarded"] = discarded
+    if args.isotropic:
+        if args.factor == 10:
+            section_errors = read_section_errors(data_dir)
+            all_images = sorted([image.name for image in images] + section_errors)
+            selected = all_images[::2]
+            discarded = all_images[1::2]
+            images = [
+                data_dir / name for name in selected if name not in section_errors
+            ]
+            extra_fields["discarded"] = discarded
+        elif args.factor != 5:
+            raise ValueError(
+                f"The required downsampling factor {args.factor} is not compatible "
+                "with isotropic voxels. Possible values: 5, 10."
+            )
 
     resampling = "nearest" if args.labels else "bilinear"
 
@@ -73,6 +85,7 @@ def main():
             {
                 "step": "downscaling",
                 "factor": factor,
+                "enforce_isotropic": args.isotropic,
             }
         ],
         **extra_fields,
