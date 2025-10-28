@@ -4,6 +4,7 @@ Utility functions
 
 import os
 import yaml
+import json
 from datetime import datetime
 import xxhash
 from pathlib import Path
@@ -216,3 +217,18 @@ def get_seg_params(dir: Path) -> dict:
 def bincount_ubyte(image: np.ndarray) -> np.ndarray:
     """Fast 256-bin histogram for uint8 images (returns counts)."""
     return np.bincount(image.ravel(), minlength=256).astype(np.int64)
+
+
+class CustomJSONEncoder(json.JSONEncoder):
+    """A custom JSONEncoder to handle non base data types"""
+
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, Path):
+            return str(obj)
+        return super().default(obj)

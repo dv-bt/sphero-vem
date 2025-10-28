@@ -43,7 +43,7 @@ if __name__ == "__main__":
                 "step": "segmentation",
                 "seg_target": "nps",
                 "model": model_name,
-                **config.return_serializable(),
+                **config.to_serializable(),
             }
         ],
     )

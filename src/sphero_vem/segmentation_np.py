@@ -11,7 +11,7 @@ import numpy as np
 from tifffile import imread
 from scipy import ndimage
 from scipy.optimize import minimize_scalar
-from sphero_vem.utils import bincount_ubyte
+from sphero_vem.utils import bincount_ubyte, CustomJSONEncoder
 
 
 @dataclass
@@ -28,7 +28,7 @@ class NanoparticleConfig:
     percent_th_high: float = 99.8
     halo_pad: int = 20
     min_size: int = 20
-    posterior_th: float = 0.9
+    posterior_th: float = 0.95
     beta_params: tuple[float, float] = (1.0, 20.0)
 
     image_list: list[Path] = field(init=False)
@@ -46,21 +46,16 @@ class NanoparticleConfig:
         self.image_list = sorted(self.stack_dir.glob("*.tif"))
         self.image_list_fit = self.image_list[1 : -1 : self.sampling_step]
 
-    def return_serializable(self) -> dict:
-        """Return the dataclass as a JSON-serializable dictionary"""
+    def to_serializable(self) -> dict:
+        """Return the dataclass as a JSON or YAML-serializable dictionary"""
         config_dict = asdict(self)
-
-        # Convert paths into strings
-        config_dict["stack_dir"] = str(config_dict["stack_dir"])
-        config_dict["image_list"] = [str(i) for i in config_dict["image_list"]]
-        config_dict["image_list_fit"] = [str(i) for i in config_dict["image_list_fit"]]
-
-        return config_dict
+        json_string = json.dumps(config_dict, cls=CustomJSONEncoder)
+        return json.loads(json_string)
 
     def save_json(self, filepath: str | Path) -> None:
         """Saves the dataclass instance to a JSON file."""
         with open(filepath, "w") as file:
-            json.dump(self.return_serializable(), file, indent=4)
+            json.dump(self.to_serializable(), file, indent=4)
 
     @classmethod
     def from_json(cls, filepath: str | Path) -> Self:
@@ -114,7 +109,8 @@ class NanoparticleSegmentation:
 
     def save(self, target_dir: str | Path) -> None:
         """Save the calculated probabilities and the training parameters in the
-        specified directory as model_params.npz and training_manifest.json, respectively"""
+        specified directory as model_params.npz and training_manifest.json, respectively.
+        It also saves the summary of the fit results in fit_results.json"""
         if isinstance(target_dir, str):
             target_dir = Path(target_dir)
         self.config.save_json(target_dir / "training_manifest.json")
@@ -126,6 +122,8 @@ class NanoparticleSegmentation:
             hist_stack=self.hist_stack,
             hist_bg=self.hist_bg,
         )
+        with open(target_dir / "fit_results.json", "w") as file:
+            json.dump(self.summary_fit, file, indent=4, cls=CustomJSONEncoder)
 
     def _normalize_pmf(self, hist: np.ndarray) -> np.ndarray:
         """Normalizes a count histogram and adds a tiny floor to avoid divisions by zero"""

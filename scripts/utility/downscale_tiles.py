@@ -55,6 +55,16 @@ def main():
 
     resampling = "nearest" if args.labels else "bilinear"
 
+    for image_path in tqdm(images, desc="Downscaling images"):
+        image = read_tensor(
+            image_path,
+            dtype=torch.uint8,
+            ds_factor=factor,
+            return_4d=False,
+            resample_mode=resampling,
+        ).numpy()
+        write_image(out_dir / image_path.name, image, compressed=args.labels)
+
     generate_manifest(
         data_dir.name,
         out_dir,
@@ -67,15 +77,6 @@ def main():
         ],
         **extra_fields,
     )
-    for image_path in tqdm(images, desc="Downscaling images"):
-        image = read_tensor(
-            image_path,
-            dtype=torch.uint8,
-            ds_factor=factor,
-            return_4d=False,
-            resample_mode=resampling,
-        ).numpy()
-        write_image(out_dir / image_path.name, image, compressed=args.labels)
 
 
 if __name__ == "__main__":
