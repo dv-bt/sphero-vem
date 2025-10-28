@@ -14,6 +14,7 @@ import torchvision.transforms.v2 as transforms
 from torchvision.tv_tensors import Image
 from sphero_vem.preprocessing import Normalize
 import tifffile
+import numpy as np
 
 
 class TiffDataset(Dataset):
@@ -210,3 +211,8 @@ def get_seg_params(dir: Path) -> dict:
         if step.get("step") == "segmentation":
             seg_params = step
     return seg_params
+
+
+def bincount_ubyte(image: np.ndarray) -> np.ndarray:
+    """Fast 256-bin histogram for uint8 images (returns counts)."""
+    return np.bincount(image.ravel(), minlength=256).astype(np.int64)
