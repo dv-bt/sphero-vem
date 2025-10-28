@@ -477,13 +477,6 @@ def segment_stack(config: SegmentationConfig) -> None:
         }
     ]
 
-    generate_manifest(
-        config.dataset,
-        config.out_dir,
-        sorted(config.data_dir.glob("*.tif")),
-        processing,
-    )
-
     volume_stack = read_stack(config.data_dir, verbose=config.verbose)
     cellpose_model = models.CellposeModel(gpu=True, pretrained_model=config.model_dir)
 
@@ -513,3 +506,10 @@ def segment_stack(config: SegmentationConfig) -> None:
     vprint(f"Elapsed time: {time_finish - time_start}", config.verbose)
 
     write_image(config.out_path, masks, compressed=True)
+
+    generate_manifest(
+        config.dataset,
+        config.out_dir,
+        sorted(config.data_dir.glob("*.tif")),
+        processing,
+    )
