@@ -6,8 +6,7 @@ import argparse
 from tqdm import tqdm
 from pathlib import Path
 import torch
-import tifffile
-from sphero_vem.io import read_tensor
+from sphero_vem.io import read_tensor, write_image
 from sphero_vem.utils import generate_manifest, read_section_errors
 
 
@@ -26,6 +25,12 @@ def parse_args():
         "--source_dir",
         type=Path,
         help="Source directory",
+    )
+    parser.add_argument(
+        "-l",
+        "--labels",
+        action="store_true",
+        help="Flag the tiles as labels and performs nearest neighbor interpolation",
     )
     return parser.parse_args()
 
@@ -48,6 +53,8 @@ def main():
         images = [data_dir / name for name in selected if name not in section_errors]
         extra_fields["discarded"] = discarded
 
+    resampling = "nearest" if args.labels else "bilinear"
+
     generate_manifest(
         data_dir.name,
         out_dir,
@@ -62,9 +69,13 @@ def main():
     )
     for image_path in tqdm(images, desc="Downscaling images"):
         image = read_tensor(
-            image_path, dtype=torch.uint8, ds_factor=factor, return_4d=False
+            image_path,
+            dtype=torch.uint8,
+            ds_factor=factor,
+            return_4d=False,
+            resample_mode=resampling,
         ).numpy()
-        tifffile.imwrite(out_dir / image_path.name, image)
+        write_image(out_dir / image_path.name, image, compressed=args.labels)
 
 
 if __name__ == "__main__":
