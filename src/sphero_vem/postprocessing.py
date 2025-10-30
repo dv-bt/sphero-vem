@@ -86,9 +86,7 @@ def merge_labels(
                 "When not supplying a precomputed edge map, "
                 "a valid image must be specified"
             )
-        edge_map = ndi.gaussian_gradient_magnitude(image, sigma, np.float32)
-        p1, p99 = np.percentile(edge_map, (1, 99))
-        edge_map = np.clip((edge_map - p1) / (p99 - p1), 0, 1)
+        edge_map = gaussian_edge_map(image, sigma=sigma)
 
     rag = graph.rag_boundary(labels, edge_map, connectivity=1)
 
@@ -160,3 +158,12 @@ def calc_volume(labels: np.ndarray) -> dict[int, float]:
 def calc_sphericity(area: float, volume: float) -> float:
     """Calculate sphericity from object area and volume"""
     return (np.pi ** (1 / 3)) * ((6 * volume) ** (2 / 3)) / area
+
+
+def gaussian_edge_map(image: np.ndarray, sigma: float | int) -> np.ndarray:
+    """Calculate edge map using Gaussian-smoothed gradient magnitude.
+    The edge map is clipped to 1st and 99th percentile and normalized."""
+    edge_map = ndi.gaussian_gradient_magnitude(image, sigma, np.float32)
+    p1, p99 = np.percentile(edge_map, (1, 99))
+    edge_map = np.clip((edge_map - p1) / (p99 - p1), 0, 1)
+    return edge_map
