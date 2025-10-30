@@ -50,12 +50,14 @@ def imread_labels_downscaled(
     return labels_resized.squeeze().numpy()
 
 
-def write_stack(data_dir: Path, out_file: Path, channel_axis: bool = False) -> None:
+def write_stack(
+    data_dir: Path, out_file: Path, channel_axis: bool = False, compressed: bool = False
+) -> None:
     """Merge images in a folder into a single ZYX tif. If channel_axis option is True,
     save also a channel of size 1 so that every image is CYZ"""
 
     volume_stack = read_stack(data_dir, channel_axis=channel_axis)
-    tifffile.imwrite(out_file, volume_stack)
+    write_image(out_file, volume_stack, compressed=compressed)
 
 
 def read_stack(
