@@ -9,9 +9,17 @@ from dataclasses import dataclass, field, asdict
 from tqdm import tqdm
 import numpy as np
 from tifffile import imread
-from scipy import ndimage
 from scipy.optimize import minimize_scalar
-from sphero_vem.utils import bincount_ubyte, CustomJSONEncoder
+from scipy.ndimage import find_objects
+from sphero_vem.utils import CustomJSONEncoder
+from sphero_vem.utils.accelerator import (
+    xp,
+    gpu_dispatch,
+    ArrayLike,
+    ndi,
+    to_host,
+    to_device,
+)
 
 
 @dataclass
@@ -166,35 +174,47 @@ class NanoparticleSegmentation:
             disable=not self.config.verbose,
         ):
             image = imread(path)
-
-            # Rough object seeds by intensity
-            mask = image > self.th_low
-            labels, num = ndimage.label(mask, structure=np.ones((3, 3), dtype=np.uint8))
-            if num > 0:
-                sizes = np.bincount(labels.ravel())[1:]
-                bboxes = ndimage.find_objects(labels)
-                keep = np.nonzero(sizes >= self.config.min_size)[0]
-                obj_mask = np.zeros(image.shape, dtype=bool)
-                for i in keep:
-                    sl = self._expand_bbox(bboxes[i], image)
-                    obj_mask[sl] = True
-            else:
-                obj_mask = np.zeros(image.shape, dtype=bool)
-
-            # Hard background exclusion above upper intensity threshold
-            bright_mask = image >= self.th_high
-            bg_mask = (~obj_mask) & (~bright_mask)
-
-            if bg_mask.any():
-                hist_bg += bincount_ubyte(image[bg_mask])
+            hist_bg += self._extract_bg_hist(image)
 
         self.hist_bg = hist_bg
         self.p_bg = self._normalize_pmf(hist_bg)
 
-    def _expand_bbox(self, bbox: tuple[slice], image: np.ndarray) -> tuple[slice]:
+    @gpu_dispatch(return_to_host=True)
+    def _extract_bg_hist(self, image: ArrayLike) -> ArrayLike | None:
+        """Calculate background histogram with GPU acceleration, if available.
+        If no background found, return 0. This is to keep consistency with background
+        accumulation across slices."""
+
+        def find_objects_cpu(labels: ArrayLike) -> list[tuple[slice]]:
+            """scipy.ndimage.find_objects is not yet implemented in cupy.
+            Fallback to CPU and handle moving inputs"""
+            labels = to_host(labels)
+            return find_objects(labels)
+
+        # Rough object seeds by intensity
+        mask = image > self.th_low
+        labels, num = ndi.label(mask, structure=np.ones((3, 3), dtype=xp.uint8))
+        if num > 0:
+            sizes = xp.bincount(labels.ravel())[1:]
+            keep = xp.nonzero(sizes >= self.config.min_size)[0]
+            bboxes = find_objects_cpu(labels)
+            obj_mask = xp.zeros(image.shape, dtype=bool)
+            for i in keep:
+                sl = self._expand_bbox(bboxes[int(i)], image.shape)
+                obj_mask[sl] = True
+        else:
+            obj_mask = xp.zeros(image.shape, dtype=bool)
+
+        # Hard background exclusion above upper intensity threshold
+        bright_mask = image >= self.th_high
+        bg_mask = (~obj_mask) & (~bright_mask)
+        if bg_mask.any():
+            return bincount_ubyte(image[bg_mask])
+        return
+
+    def _expand_bbox(self, bbox: tuple[slice], image_shape: tuple) -> tuple[slice]:
         """Expand a ndimage.find_objects bbox by pad pixels controlled by config.halo_pad."""
         (slice_y, slice_x) = bbox
-        image_shape = image.shape
         y0 = max(slice_y.start - self.config.halo_pad, 0)
         y1 = min(slice_y.stop + self.config.halo_pad, image_shape[0])
         x0 = max(slice_x.start - self.config.halo_pad, 0)
@@ -280,7 +300,8 @@ class NanoparticleSegmentation:
         res = minimize_scalar(nll_beta_prior, bounds=(0.0, 1.0), method="bounded")
         return float(res.x)
 
-    def predict(self, image):
+    @gpu_dispatch(return_to_host=True)
+    def predict(self, image: ArrayLike) -> np.ndarray:
         """Predict the NP posterior distribution of the given image.
 
         Parameters
@@ -300,8 +321,14 @@ class NanoparticleSegmentation:
         pi = self._fit_pi(hist_image)
 
         mix = pi * self.p_np + (1 - pi) * self.p_bg
-        posterior_bins = (pi * self.p_np) / (mix + self.config.eps)
+        posterior_bins = to_device((pi * self.p_np) / (mix + self.config.eps))
 
         posterior_map = posterior_bins[image]
-        posterior_mask = (posterior_map > self.config.posterior_th).astype(np.uint8)
+        posterior_mask = (posterior_map > self.config.posterior_th).astype(xp.uint8)
         return posterior_mask, posterior_map
+
+
+@gpu_dispatch(return_to_host=True)
+def bincount_ubyte(image: ArrayLike) -> np.ndarray:
+    """Calculates image histogram with GPU acceleration"""
+    return xp.bincount(image.ravel(), minlength=256).astype(xp.int64)
