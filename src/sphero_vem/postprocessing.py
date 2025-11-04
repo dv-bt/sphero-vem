@@ -2,9 +2,11 @@
 Postprocessing functions
 """
 
+import itertools
 import numpy as np
-import scipy.ndimage as ndi
 from skimage import graph
+from skimage.morphology import ball
+from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_device
 
 
 def merge_labels(
@@ -132,7 +134,7 @@ def merge_labels(
 
     merged = graph.cut_threshold(labels.copy(), rag_th, edge_thresh, in_place=False)
 
-    return merged, rag
+    return merged, rag, rag_th
 
 
 def calc_surface(rag: graph.RAG) -> dict[int, float]:
@@ -160,10 +162,86 @@ def calc_sphericity(area: float, volume: float) -> float:
     return (np.pi ** (1 / 3)) * ((6 * volume) ** (2 / 3)) / area
 
 
-def gaussian_edge_map(image: np.ndarray, sigma: float | int) -> np.ndarray:
-    """Calculate edge map using Gaussian-smoothed gradient magnitude.
-    The edge map is clipped to 1st and 99th percentile and normalized."""
+@gpu_dispatch(return_to_host=True)
+def gaussian_edge_map(image: ArrayLike, sigma: float | int) -> ArrayLike:
+    """Calculate edge map of an image using Gaussian-smoothed gradient magnitude
+
+    The edge map is clipped to 1st and 99th percentile and normalized.
+    The function automatically uses GPU acceleration when available.
+
+    Parameters
+    ----------
+    image : ArrayLike
+        The image to be analyzed.
+    sigma : float | int
+        The standard deviation of the Gaussian filter applied before gradient
+        calculation.
+
+    Returns
+    -------
+    ArrayLike
+        The edge map of the image, normalized to [0, 1].
+    """
     edge_map = ndi.gaussian_gradient_magnitude(image, sigma, np.float32)
-    p1, p99 = np.percentile(edge_map, (1, 99))
-    edge_map = np.clip((edge_map - p1) / (p99 - p1), 0, 1)
+    p1, p99 = xp.percentile(edge_map, (1, 99))
+    edge_map = xp.clip((edge_map - p1) / (p99 - p1), 0, 1)
     return edge_map
+
+
+@gpu_dispatch()
+def expand_labels(labels: ArrayLike, grow_dist: int = 1) -> ArrayLike:
+    """Expand labels by grow_dist (in voxels) while preserving instance labels"""
+    out = labels.copy()
+    struct = xp.asarray(ndi.generate_binary_structure(3, 1))
+    for _ in range(grow_dist):
+        foreground = out > 0
+        dilated_foreground = ndi.binary_dilation(foreground, structure=struct)
+        new_voxels = dilated_foreground & (~foreground)
+        if not new_voxels.any():
+            break
+
+        neigh_labels = []
+        for axis, shift in itertools.product((0, 1, 2), (-1, 1)):
+            shifted = xp.roll(out, shift=shift, axis=axis)
+            neigh_labels.append(shifted)
+        neigh_stack = xp.stack(neigh_labels, axis=0)
+        propagated = neigh_stack.max(axis=0)
+        out = xp.where(new_voxels, propagated, out)
+    return out
+
+
+@gpu_dispatch(return_to_host=True)
+def fill_internal_seams(
+    labels: ArrayLike, close_radius: int = 2, grow_dist: int = 3
+) -> ArrayLike:
+    """Fill internal seams between labels
+
+    This function should be used with caution when there are separate instances close
+    together, as it might lead to incorrect instance edges.
+    The function automatically uses GPU acceleration when available.
+
+    Parameters
+    ----------
+    labels : ArrayLike
+        An array of integer labels
+    close_radius : int
+        The radius of a ball element used for morphological closing of the image.
+        Default is 2.
+    grow_dist : int
+        The distance in voxels use to expand the labels for assigning the newly closed
+        regions to the correct instance. Default is 3.
+
+    Returns
+    -------
+    ArrayLike
+        The labels with closed internal seams.
+    """
+    binary = labels > 0
+
+    selem = to_device(ball(close_radius))
+    binary_closed = ndi.binary_closing(binary, structure=selem)
+    binary_closed = xp.logical_or(binary_closed, binary)
+
+    # Expand instance labels to new voxels and keep only true expanded
+    grown_gpu = expand_labels(labels, grow_dist=grow_dist)
+    return xp.where(binary_closed, grown_gpu, xp.zeros_like(grown_gpu))
