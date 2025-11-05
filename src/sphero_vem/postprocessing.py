@@ -2,11 +2,14 @@
 Postprocessing functions
 """
 
+from pathlib import Path
 import itertools
 import numpy as np
+import torch.nn.functional as F
 from skimage import graph
 from skimage.morphology import ball
 from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_device
+from sphero_vem.io import read_tensor, write_image
 
 
 def merge_labels(
@@ -134,7 +137,7 @@ def merge_labels(
 
     merged = graph.cut_threshold(labels.copy(), rag_th, edge_thresh, in_place=False)
 
-    return merged, rag, rag_th
+    return merged, rag
 
 
 def calc_surface(rag: graph.RAG) -> dict[int, float]:
@@ -245,3 +248,18 @@ def fill_internal_seams(
     # Expand instance labels to new voxels and keep only true expanded
     grown_gpu = expand_labels(labels, grow_dist=grow_dist)
     return xp.where(binary_closed, grown_gpu, xp.zeros_like(grown_gpu))
+
+
+def upscale_labels(label_path: Path, dest_path: Path, shape: tuple) -> None:
+    """Takes a torch tensor as input and returns a numpy array ready for saving"""
+    labels = read_tensor(label_path)
+    while labels.dim() < 5:
+        labels = labels.unsqueeze(0)
+    upscaled_tensor = F.interpolate(labels, size=shape, mode="nearest")
+    upscaled_array = upscaled_tensor.squeeze().numpy()
+    # Infer data type
+    if upscaled_array.max() <= 255:
+        dtype = np.uint8
+    else:
+        dtype = np.uint16
+    write_image(dest_path, upscaled_array.astype(dtype), compressed=True)
