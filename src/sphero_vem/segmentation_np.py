@@ -38,6 +38,7 @@ class NanoparticleConfig:
     min_size: int = 20
     posterior_th: float = 0.95
     beta_params: tuple[float, float] = (1.0, 20.0)
+    save_prob: bool = False
 
     image_list: list[Path] = field(init=False)
     image_list_fit: list[Path] = field(init=False)

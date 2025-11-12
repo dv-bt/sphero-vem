@@ -16,6 +16,8 @@ from cellpose import models, train, io, metrics
 import torch
 import numpy as np
 import pandas as pd
+import zarr
+from zarr.codecs import BloscCodec, BloscShuffle
 from sphero_vem.io import read_tensor, write_image, read_stack
 from sphero_vem.utils import (
     get_file_info,
@@ -449,11 +451,15 @@ class SegmentationConfig:
     compute_stats: bool = False
     out_dir: Path | None = None
     mode: str = "inference"
+    save_flows: bool = True
+    zarr_chunks: tuple[int, int, int] = (128, 512, 512)
+    spacing: tuple[int, int, int] = (100, 100, 100)
 
     dataset: str = field(init=False)
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
     out_path: Path = field(init=False)
+    flows_path: Path = field(init=False)
 
     def __post_init__(self):
         self.dataset = re.search(r"(Au_\d+-vol_\d+)", str(self.data_dir)).group(1)
@@ -471,6 +477,7 @@ class SegmentationConfig:
                 )
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.out_path = self.out_dir / f"{self.dataset}-{self.seg_target}.tif"
+        self.flows_path = self.out_dir / f"{self.dataset}-{self.seg_target}-flows.zarr"
 
 
 def segment_stack(config: SegmentationConfig) -> None:
@@ -493,8 +500,12 @@ def segment_stack(config: SegmentationConfig) -> None:
     vprint(f"Starting segmentation at {time_start}", config.verbose)
 
     with torch.inference_mode():
-        masks, _, _ = cellpose_model.eval(
-            volume_stack, do_3D=True, channel_axis=1, z_axis=0, **seg_params
+        masks, flows, _ = cellpose_model.eval(
+            volume_stack,
+            do_3D=True,
+            channel_axis=1,
+            z_axis=0,
+            **seg_params,
         )
 
     # Compute masks statistics
@@ -514,7 +525,40 @@ def segment_stack(config: SegmentationConfig) -> None:
     vprint(f"Completed segmentation at {time_finish}", config.verbose)
     vprint(f"Elapsed time: {time_finish - time_start}", config.verbose)
 
+    vprint("Saving segmentation mask", config.verbose)
     write_image(config.out_path, masks, compressed=True)
+
+    if config.save_flows:
+        vprint("Saving flows", config.verbose)
+        dP = np.ascontiguousarray(flows[1]).astype(np.float16, copy=False)
+        cellprob = np.ascontiguousarray(flows[2]).astype(np.float16, copy=False)
+
+        compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+        zarr_root = zarr.open(config.flows_path, mode="w")
+        cellprob_arr = zarr_root.create_array(
+            "cellprob",
+            shape=(1, *cellprob.shape),
+            chunks=(1, *config.zarr_chunks),
+            dtype="f2",
+            compressors=compressor,
+        )
+        dp_arr = zarr_root.create_array(
+            "dP",
+            shape=dP.shape,
+            chunks=(3, *config.zarr_chunks),
+            dtype="f2",
+            compressors=compressor,
+        )
+
+        cellprob_arr[...] = cellprob[None, ...]
+        dp_arr[...] = dP
+
+        # Update zarr metadata
+        manifest = read_manifest(config.data_dir)
+        for arr in zarr_root.arrays():
+            arr.attrs["spacing"] = config.spacing
+            arr.attrs["processing"] = manifest["processing"] + processing
+            arr.attrs["inputs"] = sorted(config.data_dir.glob("*.tif"))
 
     generate_manifest(
         config.dataset,
