@@ -18,14 +18,14 @@ import numpy as np
 import pandas as pd
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
-from sphero_vem.io import read_tensor, write_image, read_stack
+from sphero_vem.io import read_tensor, write_image
 from sphero_vem.utils import (
     get_file_info,
     read_manifest,
     timestamp,
-    generate_manifest,
     vprint,
 )
+from sphero_vem.postprocessing import decompose_flow, median_filter
 
 
 @dataclass
@@ -427,61 +427,61 @@ def match_predictions(ground_truth: np.ndarray, predictions: np.ndarray) -> np.n
 
 @dataclass
 class SegmentationParams:
-    """Parameters passed to the segmentation function"""
+    """Parameters passed to the cellpose_model.eval() to calculate flows"""
 
     batch_size: int = 64
-    flow3D_smooth: int = 0
+    flow3D_smooth: int = 2
     cellprob_threshold: float = 0.0
-    min_size: int = 100
-    tile_overlap: float = 0.1
+    tile_overlap: float = 0.2
     niter: int = 200
     flow_threshold: float = 0.4
     augment: bool = False
-    anisotropy: float | None = None
 
 
 @dataclass
 class SegmentationConfig:
     """Segment a volume stack using cellpose"""
 
-    data_dir: Path
+    root_path: Path
     model: str
+    spacing_dir: str
     seg_params: SegmentationParams
+    out_path: Path | None = None
     verbose: bool = True
-    compute_stats: bool = False
     out_dir: Path | None = None
-    mode: str = "inference"
-    save_flows: bool = True
-    zarr_chunks: tuple[int, int, int] = (128, 512, 512)
-    spacing: tuple[int, int, int] = (100, 100, 100)
+    zarr_chunks: tuple[int, int, int] | None = None
+    median_filter_cellprob: int | None = 3
+    decompose_flows: bool = False
+    decompose_flows_pad_fraction: float = 0.3
 
-    dataset: str = field(init=False)
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
-    out_path: Path = field(init=False)
-    flows_path: Path = field(init=False)
+    spacing: tuple[int, int, int] = field(init=False)
 
     def __post_init__(self):
-        self.dataset = re.search(r"(Au_\d+-vol_\d+)", str(self.data_dir)).group(1)
         self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
         self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
-        if not self.out_dir:
-            if self.mode == "inference":
-                self.out_dir = Path(
-                    f"data/processed/segmented/{self.dataset}/{self.seg_target}"
-                )
-            elif self.mode == "param_optim":
-                self.out_dir = Path(
-                    "data/processed/segmented/optimization_3d/"
-                    f"{self.seg_target}-run{timestamp()}"
-                )
-        self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.out_path = self.out_dir / f"{self.dataset}-{self.seg_target}.tif"
-        self.flows_path = self.out_dir / f"{self.dataset}-{self.seg_target}-flows.zarr"
+        self.spacing = tuple(int(i) for i in self.spacing_dir.split("-"))
+
+        # If out_dir is not specified, save under the Zarr path of the images
+        if not self.out_path:
+            self.out_path = self.root_path
+        else:
+            self.out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Unless specified, set zarr chunks as (1, H, W)
+        if not self.zarr_chunks:
+            self.zarr_chunks = self._get_chunks()
+
+    def _get_chunks(self) -> tuple[int, int, int]:
+        """Define chunks as (1, H, W)"""
+        zarr_root = zarr.open_group(self.root_path, mode="r")
+        return (1, *zarr_root["image"][self.spacing_dir].shape[1:])
 
 
 def segment_stack(config: SegmentationConfig) -> None:
-    """Segment volume stack using config as input"""
+    """Segment volume stack using config as input. This function calculates flows and
+    cell probability, masks have to be calculated in a following step."""
     seg_params = asdict(config.seg_params)
 
     processing = [
@@ -490,31 +490,28 @@ def segment_stack(config: SegmentationConfig) -> None:
             "model": config.model,
             "seg_target": config.seg_target,
             **seg_params,
+            "median_filter_cellprob": config.median_filter_cellprob,
+            "decompose_flows": config.decompose_flows,
+            "decompose_flows_pad_fraction": config.decompose_flows_pad_fraction,
         }
     ]
 
-    volume_stack = read_stack(config.data_dir, verbose=config.verbose)
+    data_root = zarr.open_group(config.root_path, mode="r")
+    images_zarr = data_root["images"][config.spacing_dir]
+    volume_stack = images_zarr[:]
     cellpose_model = models.CellposeModel(gpu=True, pretrained_model=config.model_dir)
 
     time_start = datetime.now()
     vprint(f"Starting segmentation at {time_start}", config.verbose)
 
     with torch.inference_mode():
-        masks, flows, _ = cellpose_model.eval(
+        _, flows, _ = cellpose_model.eval(
             volume_stack,
             do_3D=True,
             channel_axis=1,
             z_axis=0,
-            **seg_params,
+            compute_masks=False**seg_params,
         )
-
-    # Compute masks statistics
-    if config.compute_stats:
-        ninst = int(masks.max())
-        volumes = np.bincount(masks.ravel())[1:] if ninst else np.array([np.nan])
-        # Equivalent diameter in micrometers, assuming 100 nm pixel size
-        diams = 2 * (volumes * 3 / (4 * np.pi)) ** (1 / 3) * 0.1
-        np.savez(config.out_dir / "masks_stats.npz", volume=volumes, diameter=diams)
 
     # Ensure GPU memory is garbage collected
     cellpose_model.net.to("cpu")
@@ -525,44 +522,46 @@ def segment_stack(config: SegmentationConfig) -> None:
     vprint(f"Completed segmentation at {time_finish}", config.verbose)
     vprint(f"Elapsed time: {time_finish - time_start}", config.verbose)
 
-    vprint("Saving segmentation mask", config.verbose)
-    write_image(config.out_path, masks, compressed=True)
+    # Post process flows
+    vprint("Starting flow postprocessing", config.verbose)
 
-    if config.save_flows:
-        vprint("Saving flows", config.verbose)
-        dP = np.ascontiguousarray(flows[1]).astype(np.float16, copy=False)
-        cellprob = np.ascontiguousarray(flows[2]).astype(np.float16, copy=False)
+    dP = np.ascontiguousarray(flows[1]).astype(np.float16, copy=False)
+    cellprob = np.ascontiguousarray(flows[2]).astype(np.float16, copy=False)
 
-        compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-        zarr_root = zarr.open(config.flows_path, mode="w")
-        cellprob_arr = zarr_root.create_array(
-            "cellprob",
-            shape=(1, *cellprob.shape),
-            chunks=(1, *config.zarr_chunks),
-            dtype="f2",
-            compressors=compressor,
+    if config.decompose_flows:
+        dP = decompose_flow(
+            dP, config.decompose_flows_pad_fraction, torch.device("cuda")
         )
-        dp_arr = zarr_root.create_array(
-            "dP",
-            shape=dP.shape,
-            chunks=(3, *config.zarr_chunks),
-            dtype="f2",
-            compressors=compressor,
-        )
+    cellprob = median_filter(cellprob, config.median_filter_cellprob)
 
-        cellprob_arr[...] = cellprob[None, ...]
-        dp_arr[...] = dP
+    # Saving flows
+    vprint("Saving flows", config.verbose)
 
-        # Update zarr metadata
-        manifest = read_manifest(config.data_dir)
-        for arr in zarr_root.arrays():
-            arr.attrs["spacing"] = config.spacing
-            arr.attrs["processing"] = manifest["processing"] + processing
-            arr.attrs["inputs"] = sorted(config.data_dir.glob("*.tif"))
+    save_root = zarr.open_group(config.out_path, "a")
+    labels_group = save_root.require_group("labels")
+    flows_group = labels_group.require_group("flows")
 
-    generate_manifest(
-        config.dataset,
-        config.out_dir,
-        sorted(config.data_dir.glob("*.tif")),
-        processing,
+    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+    cellprob_arr = flows_group.create_array(
+        "cellprob",
+        shape=cellprob.shape,
+        chunks=config.zarr_chunks,
+        dtype="f2",
+        compressors=compressor,
     )
+    dp_arr = flows_group.create_array(
+        "dP",
+        shape=dP.shape,
+        chunks=(3, *config.zarr_chunks),
+        dtype="f2",
+        compressors=compressor,
+    )
+
+    cellprob_arr[...] = cellprob
+    dp_arr[...] = dP
+
+    # Update metadata
+    for arr in flows_group.arrays():
+        arr.attrs["spacing"] = config.spacing
+        arr.attrs["processing"] = volume_stack.attrs.get("processing") + processing
+        arr.attrs["inputs"] = volume_stack.path

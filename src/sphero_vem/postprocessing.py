@@ -5,9 +5,12 @@ Postprocessing functions
 from pathlib import Path
 import itertools
 import numpy as np
+import torch
+import torch.fft
 import torch.nn.functional as F
 from skimage import graph
 from skimage.morphology import ball
+import zarr
 from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_device
 from sphero_vem.io import read_tensor, write_image
 
@@ -263,3 +266,143 @@ def upscale_labels(label_path: Path, dest_path: Path, shape: tuple) -> None:
     else:
         dtype = np.uint16
     write_image(dest_path, upscaled_array.astype(dtype), compressed=True)
+
+
+def seg_params_zarr(arr: zarr.Array) -> dict:
+    """Get segmentation parameters from a Zarr array. Returns empty dict if not found"""
+    for step in arr.attrs.get("processing", {}):
+        if step.get("step") == "segmentation":
+            return step
+    return {}
+
+
+def _get_curl_free_component(
+    input: torch.Tensor,
+    spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    padding: tuple[int, int, int] = (0, 0, 0),
+) -> torch.Tensor:
+    """
+    Computes the curl-free (irrotational) component of a 3D vector field unsing a
+    FFT-based approach.
+
+    Parameters
+    ----------
+    input_vec : torch.Tensor
+        The input 3D vector field (3, Z, Y, X)
+    spacing : tuple[float, float, float], optional
+        Grid spacing (dz, dy, dx). Default is (1.0, 1.0, 1.0)
+    padding : tuple[int, int, int], optional)
+        Zero-padding for (Z, Y, X) to add to each side.
+
+    Returns
+    --------
+    torch.Tensor
+        The curl-free (irrotational) component (3, Z, Y, X).
+    """
+
+    if input.dim() != 4 or input.shape[0] != 3:
+        raise ValueError("Input tensor must have shape (3, Z, Y, X)")
+
+    device = input.device
+    dz, dy, dx = spacing
+    pad_z, pad_y, pad_x = padding
+
+    # Padding
+    if any(p > 0 for p in padding):
+        pad_dims = (pad_x, pad_x, pad_y, pad_y, pad_z, pad_z)
+        vec_padded = F.pad(input, pad_dims, mode="constant", value=0.0)
+    else:
+        vec_padded = input.clone()
+
+    z_pad, y_pad, x_pad = vec_padded.shape[1:]
+
+    # Create k-vectors and k-squared
+    k_z_freqs = torch.fft.fftfreq(z_pad, d=dz, device=device)
+    k_y_freqs = torch.fft.fftfreq(y_pad, d=dy, device=device)
+    k_x_freqs = torch.fft.fftfreq(x_pad, d=dx, device=device)
+
+    Kz, Ky, Kx = torch.meshgrid(k_z_freqs, k_y_freqs, k_x_freqs, indexing="ij")
+
+    # Stack k-vectors into a (3, Z, Y, X) tensor
+    k_vec = torch.stack([Kz, Ky, Kx], dim=0)
+    del Kz, Ky, Kx, k_z_freqs, k_y_freqs, k_x_freqs
+    k_sq = torch.sum(k_vec**2, dim=0)
+    # Avoid division by zero at k=0
+    k_sq[0, 0, 0] = 1.0
+
+    # Forward FFT
+    vec_k_padded = torch.fft.fftn(vec_padded, dim=(1, 2, 3))
+    del vec_padded  # Free padded real-space tensor
+
+    # Projection in Fourier space
+    # (k · V_k)
+    k_dot_Vk = torch.sum(k_vec * vec_k_padded, dim=0)
+    del vec_k_padded
+    projection_scalar = k_dot_Vk / k_sq
+    del k_dot_Vk, k_sq
+
+    # Calculate the curl-free component in k-space
+    # cf_k = projection_scalar * k_vec
+    cf_k = projection_scalar.unsqueeze(0) * k_vec
+    del projection_scalar, k_vec
+
+    # Inverse FFT
+    cf_padded = torch.fft.ifftn(cf_k, dim=(1, 2, 3))
+    del cf_k
+    cf_padded_real = cf_padded.real
+
+    if any(p > 0 for p in padding):
+        cf_component = cf_padded_real[
+            :, pad_z : z_pad - pad_z, pad_y : y_pad - pad_y, pad_x : x_pad - pad_x
+        ].clone()
+    else:
+        cf_component = cf_padded_real.clone()
+
+    return cf_component
+
+
+def decompose_flow(
+    dP: np.ndarray,
+    z_pad_fraction: float = 0.3,
+    device: torch.DeviceObjType = torch.device("cpu"),
+) -> np.ndarray[np.float32]:
+    """Decompose dP output from cellpose into its curl-free component.
+
+    This is useful to remove banding artifacts that appear when nuclei shapes
+    are very complex and have "holes" or large convexities. It is detrimental when
+    working with more regular-shaped cells with many contact points.
+
+    Parameters
+    ----------
+    dP : np.ndarray
+        A numpy array of shape (3, Z, Y, X) containing cellpose flows
+    z_pad_fraction : float
+        The fraction of the total Z to be padded on both sides. This is important
+        to avoid ghosting artifacts. Default is 0.3
+    device : torch.device
+        Torch device where the computation should be executed. Default is
+        torch.device("cpu")
+
+    Returns
+    -------
+    np.ndarray
+        The curl-free component of the flows. This is returned in np.float32.
+    """
+    dP = torch.from_numpy(dP).to(device=device, dtype=torch.float32)
+    pad_z_amount = int(dP.shape[1] * z_pad_fraction)
+    padding_tuple = (pad_z_amount, 0, 0)
+
+    cf_component = _get_curl_free_component(
+        dP,
+        padding=padding_tuple,
+    )
+    return cf_component.cpu().numpy()
+
+
+@gpu_dispatch(return_to_host=True)
+def median_filter(cellprob_array: ArrayLike, size: int = 3) -> np.ndarray:
+    """
+    Applies a 3D median filter, using GPU acceleration if possible.
+    """
+    cellprob_smoothed = ndi.median_filter(cellprob_array, size=size)
+    return cellprob_smoothed
