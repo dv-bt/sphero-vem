@@ -9,6 +9,7 @@ from .misc import (
     get_seg_params,
     vprint,
     infer_dataset,
+    create_ome_multiscales,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "get_seg_params",
     "vprint",
     "infer_dataset",
+    "create_ome_multiscales",
 ]

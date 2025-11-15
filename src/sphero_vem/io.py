@@ -8,7 +8,7 @@ import tifffile
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 from sphero_vem.preprocessing import downscale_image, downscale_labels, downscale_tensor
-from sphero_vem.utils import read_manifest
+from sphero_vem.utils import read_manifest, create_ome_multiscales
 
 
 def write_image(
@@ -148,7 +148,8 @@ def stack_to_zarr(
 
     compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
     zarr_root = zarr.open(dest_path, mode="a")
-    zarr_arr = zarr_root.create_array(
+    image_group = zarr_root.require_group("images")
+    zarr_arr = image_group.create_array(
         "-".join([str(i) for i in spacing]),
         shape=stack_shape,
         chunks=chunk_size,
@@ -169,3 +170,4 @@ def stack_to_zarr(
     zarr_arr.attrs["spacing"] = spacing
     zarr_arr.attrs["processing"] = manifest["processing"]
     zarr_arr.attrs["inputs"] = [str(path) for path in image_paths]
+    create_ome_multiscales(image_group)

@@ -5,6 +5,7 @@ Utility functions
 import os
 import yaml
 import json
+import re
 from datetime import datetime
 import xxhash
 from pathlib import Path
@@ -13,9 +14,10 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms.v2 as transforms
 from torchvision.tv_tensors import Image
-from sphero_vem.preprocessing import Normalize
 import tifffile
+import zarr
 import numpy as np
+from sphero_vem.preprocessing import Normalize
 
 
 class TiffDataset(Dataset):
@@ -227,3 +229,41 @@ class CustomJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, Path):
             return str(obj)
         return super().default(obj)
+
+
+def create_ome_multiscales(group: zarr.Group):
+    """Create multiscales specifications compliant with OME-NGFF format v0.5.
+
+    Scale directories should named "{spacing_z}-{spacing_y}-{spacing_x}", where
+    spacing is in nanometers. Arrays that do not follow this naming will be ignored.
+    """
+
+    keys = list(group.array_keys())
+    scale_names = [i for i in keys if re.match(r"\d+-\d+-\d+", i)]
+    pixel_size_nm = {
+        name: tuple(int(i) for i in name.split("-")) for name in scale_names
+    }
+
+    group.attrs["multiscales"] = [
+        {
+            "version": "0.5",
+            "name": "images",
+            "axes": [
+                {"name": "z", "type": "space", "unit": "nanometer"},
+                {"name": "y", "type": "space", "unit": "nanometer"},
+                {"name": "x", "type": "space", "unit": "nanometer"},
+            ],
+            "datasets": [
+                {
+                    "path": s,
+                    "coordinateTransformations": [
+                        {
+                            "type": "scale",
+                            "scale": list(pixel_size_nm[s]),
+                        }
+                    ],
+                }
+                for s in scale_names
+            ],
+        }
+    ]
