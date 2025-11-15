@@ -5,7 +5,10 @@ from tqdm import tqdm
 import numpy as np
 import torch
 import tifffile
+import zarr
+from zarr.codecs import BloscCodec, BloscShuffle
 from sphero_vem.preprocessing import downscale_image, downscale_labels, downscale_tensor
+from sphero_vem.utils import read_manifest
 
 
 def write_image(
@@ -99,3 +102,70 @@ def read_tensor(
     if ds_factor > 1:
         image_torch = downscale_tensor(image_torch, ds_factor, resample_mode)
     return image_torch
+
+
+def stack_to_zarr(
+    stack_dir: Path,
+    dest_path: Path,
+    spacing: tuple[int, int, int] | None,
+    chunk_size: tuple[int, int, int] | None = None,
+    verbose: bool = True,
+) -> None:
+    """Convert a tiff stack to a ZYX zarr archive.
+
+    Parameters
+    ----------
+    stack_path : Path
+        Path to the tiff stack. This should be a directory with single tif slices that
+        will be concatened along the Z axis.
+    dest_path : Path
+        Path the destination zarr group.
+    spacing : tuple[int, int, int] | None
+        ZYX spacing of the dataset in nanometers. If None, attempt to read the spacing
+        from metadata (Currently not implemented).
+    chunk_size : tuple[int, int, int] | None
+        ZYX chunk size of the zarr array. If None, use (1, H, W).
+    verbose : bool
+        Enable verbose output.
+
+
+    Raises
+    ------
+    NotImplementedError
+        When passing None to spacing.
+    """
+    if not spacing:
+        raise NotImplementedError("Automatic spacing determination not yet implemented")
+
+    image_paths = sorted(stack_dir.glob("*.tif"))
+    with tifffile.TiffFile(image_paths[0]) as tif:
+        image_shape = tif.pages[0].shape
+        image_dtype = tif.pages[0].dtype
+
+    stack_shape = (len(image_paths), *image_shape)
+    if not chunk_size:
+        chunk_size = (1, *image_shape)
+
+    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+    zarr_root = zarr.open(dest_path, mode="a")
+    zarr_arr = zarr_root.create_array(
+        "-".join([str(i) for i in spacing]),
+        shape=stack_shape,
+        chunks=chunk_size,
+        dtype=image_dtype,
+        compressors=compressor,
+    )
+
+    for i, image_path in tqdm(
+        enumerate(image_paths),
+        "Reading images",
+        disable=not verbose,
+        total=len(image_paths),
+    ):
+        zarr_arr[i] = tifffile.imread(image_path)
+
+    # Update zarr metadata
+    manifest = read_manifest(stack_dir)
+    zarr_arr.attrs["spacing"] = spacing
+    zarr_arr.attrs["processing"] = manifest["processing"]
+    zarr_arr.attrs["inputs"] = [str(path) for path in image_paths]
