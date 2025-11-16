@@ -5,13 +5,14 @@ Nanoparticle segmentation
 import json
 from typing import Self
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from tqdm import tqdm
 import numpy as np
-from tifffile import imread
+import zarr
+from zarr.codecs import BloscCodec, BloscShuffle
 from scipy.optimize import minimize_scalar
 from scipy.ndimage import find_objects
-from sphero_vem.utils import CustomJSONEncoder
+from sphero_vem.utils import CustomJSONEncoder, create_ome_multiscales
 from sphero_vem.utils.accelerator import (
     xp,
     gpu_dispatch,
@@ -26,7 +27,8 @@ from sphero_vem.utils.accelerator import (
 class NanoparticleConfig:
     """Configuration class for NP segmentation"""
 
-    stack_dir: Path
+    stack_root: Path
+    spacing_dir: "str"
     verbose: bool = False
     max_iter: int = 10000
     eps: float = 1e-12
@@ -40,20 +42,14 @@ class NanoparticleConfig:
     beta_params: tuple[float, float] = (1.0, 20.0)
     save_prob: bool = False
 
-    image_list: list[Path] = field(init=False)
-    image_list_fit: list[Path] = field(init=False)
-
     def __post_init__(self) -> None:
         """Get image list"""
 
         # Enforce correct types
         if isinstance(self.beta_params, list):
             self.beta_params = tuple(self.beta_params)
-        if isinstance(self.stack_dir, str):
-            self.stack_dir = Path(self.stack_dir)
-
-        self.image_list = sorted(self.stack_dir.glob("*.tif"))
-        self.image_list_fit = self.image_list[1 : -1 : self.sampling_step]
+        if isinstance(self.stack_root, str):
+            self.stack_root = Path(self.stack_root)
 
     def to_serializable(self) -> dict:
         """Return the dataclass as a JSON or YAML-serializable dictionary"""
@@ -72,10 +68,6 @@ class NanoparticleConfig:
 
         with open(filepath, "r") as file:
             config_dict = json.load(file)
-
-        # Remove fields that are calculated by post_init
-        config_dict.pop("image_list")
-        config_dict.pop("image_list_fit")
         return cls(**config_dict)
 
 
@@ -97,6 +89,10 @@ class NanoparticleSegmentation:
             Enable verbose output. Default is False.
         """
         self.config = config
+        self.stack_root = zarr.open_group(self.config.stack_root, mode="a")
+        self.volume_stack: zarr.Array = self.stack_root["images"][
+            self.config.spacing_dir
+        ]
 
     @classmethod
     def load(cls, model_dir: str | Path) -> Self:
@@ -148,12 +144,12 @@ class NanoparticleSegmentation:
     def _calc_stack_hist(self) -> None:
         """Calculate the histogram of the entire stack with the selected sampling step."""
         hist_stack = np.zeros(256, dtype=np.int64)
-        for image_path in tqdm(
-            self.config.image_list_fit,
+        for idx in tqdm(
+            range(0, self.volume_stack.shape[0], self.config.sampling_step),
             "Calculating stack histogram",
             disable=not self.config.verbose,
         ):
-            image = imread(image_path)
+            image = self.volume_stack[idx]
             hist_stack += bincount_ubyte(image)
         self.hist_stack = hist_stack
         self.p_stack = self._normalize_pmf(hist_stack)
@@ -169,12 +165,12 @@ class NanoparticleSegmentation:
             self.p_stack.cumsum(), self.config.percent_th_high / 100
         )
 
-        for path in tqdm(
-            self.config.image_list_fit,
+        for idx in tqdm(
+            range(0, self.volume_stack.shape[0], self.config.sampling_step),
             desc="Calculating background histogram",
             disable=not self.config.verbose,
         ):
-            image = imread(path)
+            image = self.volume_stack[idx]
             hist_bg += self._extract_bg_hist(image)
 
         self.hist_bg = hist_bg
@@ -302,8 +298,8 @@ class NanoparticleSegmentation:
         return float(res.x)
 
     @gpu_dispatch(return_to_host=True)
-    def predict(self, image: ArrayLike) -> np.ndarray:
-        """Predict the NP posterior distribution of the given image.
+    def _posterior_image(self, image: ArrayLike) -> np.ndarray:
+        """Predict the NP posterior distribution of the given 2D image.
 
         Parameters
         ----------
@@ -312,8 +308,6 @@ class NanoparticleSegmentation:
 
         Returns
         -------
-        np.ndarray
-            The posterior maps thresholded at the value specified by config.
         np.ndarray
             The raw map of the posterior NP distribution, in range [0, 1].
         """
@@ -325,8 +319,49 @@ class NanoparticleSegmentation:
         posterior_bins = to_device((pi * self.p_np) / (mix + self.config.eps))
 
         posterior_map = posterior_bins[image]
-        posterior_mask = (posterior_map > self.config.posterior_th).astype(xp.uint8)
-        return posterior_mask, posterior_map
+        return posterior_map
+
+    def predict(self, model_name: str | None = None) -> None:
+        """Predict NP posterior map and save it under root.zarr/labels/nps/(spacing).
+        Posterior is saved as float16"""
+
+        # Save posteriors under root/labels/nps/(spacing)
+        labels_group = self.stack_root.require_group("labels")
+        seg_group = labels_group.require_group("nps")
+        posterior_group = seg_group.require_group("posterior")
+
+        compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+        posterior_arr = posterior_group.create_array(
+            self.config.spacing_dir,
+            shape=self.volume_stack.shape,
+            chunks=(1, *self.volume_stack.shape[1:]),
+            dtype="f2",
+            compressors=compressor,
+        )
+        for idx in tqdm(
+            range(self.volume_stack.shape[0]),
+            desc="Calculating posterior",
+            disable=not self.config.verbose,
+        ):
+            image = self.volume_stack[idx]
+            posterior = self._posterior_image(image)
+            posterior_arr[idx] = posterior
+
+        processing = [
+            {
+                "step": "segmentation",
+                "seg_target": "nps",
+                "model": model_name,
+                **self.config.to_serializable(),
+            }
+        ]
+
+        posterior_arr.attrs["spacing"] = self.volume_stack.attrs["spacing"]
+        posterior_arr.attrs["processing"] = (
+            self.volume_stack.attrs["processing"] + processing
+        )
+        posterior_arr.attrs["inputs"] = self.volume_stack.path
+        create_ome_multiscales(posterior_group)
 
 
 @gpu_dispatch(return_to_host=True)
