@@ -11,6 +11,7 @@ from .misc import (
     infer_dataset,
     create_ome_multiscales,
     spacing_from_dirname,
+    dirname_from_spacing,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "infer_dataset",
     "create_ome_multiscales",
     "spacing_from_dirname",
+    "dirname_from_spacing",
 ]

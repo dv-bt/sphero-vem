@@ -278,3 +278,9 @@ def spacing_from_dirname(dirname) -> tuple[int, int, int]:
     """Convenience function to extract spacing from directory name in the format
     '{spacing_z}-{spacing_y}-{spacing_x}'"""
     return tuple(int(i) for i in dirname.split("-"))
+
+
+def dirname_from_spacing(spacing: tuple[int, int, int]) -> str:
+    """Convenience function to create a directory name from spacing in the format
+    '{spacing_z}-{spacing_y}-{spacing_x}'"""
+    return "-".join([str(i) for i in spacing])

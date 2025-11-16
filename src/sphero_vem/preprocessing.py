@@ -2,6 +2,7 @@
 Functions for preprocessing images.
 """
 
+from pathlib import Path
 from typing import Literal
 import numpy as np
 import torch
@@ -9,6 +10,11 @@ import torch.nn.functional as F
 from torchvision import tv_tensors
 import torchvision.transforms.v2 as transforms
 from torchvision.transforms.functional import resize
+import zarr
+import dask.array as da
+import dask_image.ndinterp
+import dask_image
+from sphero_vem.utils import dirname_from_spacing, create_ome_multiscales
 
 
 class Normalize(torch.nn.Module):
@@ -138,3 +144,63 @@ def downscale_tensor(
     while image_ds.dim() > n_dim:
         image_ds = image_ds.squeeze(0)
     return image_ds
+
+
+def resample_array(
+    zarr_path: Path,
+    array_path: str,
+    target_spacing: tuple[int, int, int],
+    order: int = 1,
+) -> None:
+    """Resample an array in a Zarr archive to have the target spacing."""
+
+    root = zarr.open_group(zarr_path)
+    src_array: zarr.Array = root.get(array_path)
+    if not src_array:
+        raise FileExistsError(
+            f"The source array {array_path} was not found under {zarr_path}"
+        )
+
+    array_dask = da.from_zarr(zarr_path)
+    original_shape = array_dask.shape
+
+    spacing_dir = dirname_from_spacing(target_spacing)
+    reference_array: zarr.Array = root.get(f"images/{spacing_dir}")
+    if not reference_array:
+        raise NotImplementedError(
+            "Arbitrary spacing not yet supported. "
+            "Please specify a spacing that is already under images/"
+        )
+    target_shape = reference_array.shape
+    scale_factors = np.array(original_shape) / np.array(target_shape)
+    scaling_matrix = np.diag(scale_factors)
+
+    resampled_array = dask_image.ndinterp.affine_transform(
+        array_dask,
+        matrix=scaling_matrix,
+        output_shape=target_shape,
+        order=order,
+    )
+
+    parent_group: zarr.Group = root.get(str(Path(src_array.path).parent))
+    resampled_array.to_zarr(
+        parent_group,
+        component=spacing_dir,
+        overwrite=True,
+        compute=True,
+        dtype=src_array.dtype,
+        compressor="zstd",
+    )
+
+    # Array metadata
+    arr: zarr.Array = parent_group[spacing_dir]
+    arr.attrs["spacing"] = target_spacing
+    arr.attrs["processing"] = src_array.attrs["processing"] + [
+        {
+            "step": "resample",
+            "order": order,
+            "scale_factors": [float(i) for i in scale_factors],
+        }
+    ]
+    arr.attrs["inputs"] = src_array.path
+    create_ome_multiscales(parent_group)
