@@ -11,38 +11,143 @@ import torch.nn.functional as F
 from skimage import graph
 from skimage.morphology import ball
 import zarr
-from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_device
+import pandas as pd
+from sphero_vem.utils.accelerator import (
+    xp,
+    ndi,
+    ArrayLike,
+    gpu_dispatch,
+    to_device,
+    to_host,
+)
 from sphero_vem.io import read_tensor, write_image
+
+
+@gpu_dispatch(return_to_host=True)
+def _get_edges_and_nodes(
+    labels: ArrayLike, cellprob: ArrayLike, edge_map: ArrayLike
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Finds adjacencies and samples cellprob and edgemap at the boundaries.
+    """
+
+    # Build 6-connectivity element
+    structure = xp.array(
+        [
+            [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+            [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+        ],
+        dtype=xp.bool_,
+    )
+
+    # Find edges
+    dilated_labels = ndi.grey_dilation(labels, footprint=structure)
+    boundary_mask = labels != dilated_labels
+
+    labels_a = to_host(labels[boundary_mask])
+    labels_b = to_host(dilated_labels[boundary_mask])
+
+    probs = to_host(cellprob[boundary_mask])
+    edges = to_host(edge_map[boundary_mask])
+
+    # Find nodes
+    all_labels, pixel_counts = xp.unique(labels, return_counts=True)
+    nodes = to_host(all_labels)
+    counts = to_host(pixel_counts)
+
+    return labels_a, labels_b, probs, edges, nodes, counts
+
+
+def build_rag(
+    labels: np.ndarray, cellprob: np.ndarray, edge_map: np.ndarray
+) -> graph.RAG:
+    """
+    Builds a RAG with edge parameters:
+    - 'prob_weight': mean cell probability
+    - 'edge_weight': mean edge probability
+    - 'count': number of boundary voxels
+    - 'weight': 1 - prob_weight + edge_weight
+    """
+
+    # 1. Get all node and edge data
+    (labels_a, labels_b, probs, edges, node_ids, node_counts) = _get_edges_and_nodes(
+        labels, cellprob, edge_map
+    )
+
+    # 2. Format Node Data
+    node_attr = [
+        (label, {"labels": [label], "pixel_count": count, "total_surface_area": 0})
+        for label, count in zip(node_ids, node_counts)
+    ]
+
+    # 3. Format Edge Data
+    df = pd.DataFrame({"prob": probs, "edge": edges})
+    pair = np.sort(np.stack([labels_a, labels_b], axis=1), axis=1)
+    df["label_1"] = pair[:, 0]
+    df["label_2"] = pair[:, 1]
+
+    # Aggregate probability, edge, and count
+    edge_stats = (
+        df.groupby(["label_1", "label_2"])
+        .agg(
+            prob_weight=("prob", "mean"),
+            edge_weight=("edge", "mean"),
+            count=("prob", "size"),
+        )
+        .reset_index()
+    )
+    edge_stats["weight"] = 1 - (edge_stats["prob_weight"] - edge_stats["edge_weight"])
+
+    # Create the edge list for the graph constructor
+    edge_list = []
+    for _, row in edge_stats.iterrows():
+        # Correct for 1-sided detection
+        true_count = int(row["count"]) * 2
+        edge_list.append(
+            (
+                row["label_1"],
+                row["label_2"],
+                {
+                    "weight": row["weight"],
+                    "prob_weight": row["prob_weight"],
+                    "edge_weight": row["edge_weight"],
+                    "count": true_count,
+                },
+            )
+        )
+
+    rag = graph.RAG(label_image=None, data=edge_list)
+    rag.add_nodes_from(node_attr)
+    return rag
 
 
 def merge_labels(
     labels: np.ndarray,
+    cellprob: np.ndarray,
     image: np.ndarray | None = None,
     edge_map: np.ndarray | None = None,
     rel_contact_thresh: float = 0.1,
-    edge_thresh: float = 0.15,
-    sphericity_thresh: float | None = None,
+    weight_thresh: float = 0.15,
     sigma: int = 1,
 ) -> tuple[np.ndarray, graph.RAG]:
     """
     Merge adjacent labeled regions based on boundary strength and relative contact area.
+
     This function constructs a region adjacency graph (RAG) from an integer-labeled
     segmentation and an edge strength map, annotates edges with the relative contact
     area between regions, preventing merging for small contacts, and then
-    performs a threshold-based region merging. If no precomputed edge map is
-    provided, an edge map is computed from a supplied grayscale image.
+    performs a threshold-based region merging.
 
     Parameters
     ----------
     labels : numpy.ndarray
-        Integer-labeled segmentation image. Labels should be non-negative integers
-        where each connected component with the same integer value represents a
-        region
+        Integer-labeled segmentation image
+    cellprob : numpy.ndarray
+        Cell probability map (logits) output by cellpose.
     image : numpy.ndarray, optional
         Grayscale image used to compute an edge map when `edge_map` is not provided.
-        If given, the function computes the Gaussian gradient magnitude of this
-        image and rescales it using the 1st and 99th percentiles to yield values in
-        [0, 1]. Required if `edge_map` is None.
+        Required if `edge_map` is None.
     edge_map : numpy.ndarray, optional
         Precomputed normalized edge strength map (float array, expected in range [0, 1])
         used for building the RAG. If provided, `image` is ignored.
@@ -51,22 +156,13 @@ def merge_labels(
         a neighbor) required for an edge to be considered mergeable. Edges with
         maximal relative contact < this threshold will have their 'weight' set to
         1.0 to discourage merging. Default is 0.1.
-    edge_thresh : float, optional
+    weight_thresh : float, optional
         Threshold applied to the RAG by `graph.cut_threshold` to perform merging.
         Edges with weight (or other computed metric) below this threshold will be
-        merged. Default is 0.15.
-    sphericity_thresh: float | None, optional
-        Minimum node sphericity to consider an edge a candidate for merging. Values
-        should be in the range [0, 1]. Edges where both nodes have a sphericity larger
-        than this value will have their weights set to 1. If set to None, no sphericity
-        check is done. Default is None.
+        merged. Weight is calculated as (1 - cellprob) + edge_map. Default is 0.15.
     sigma : int, optional
         Standard deviation for the Gaussian kernel used when computing the image
         gradient magnitude if `edge_map` is not provided. Default is 1.
-    connectivity : int, optional
-        Pixel connectivity used when constructing the RAG (e.g. 1 for 4-connectivity,
-        2 for 8-connectivity in 2D). Forwarded to the underlying RAG constructor.
-        Default is 2.
 
     Returns
     -------
@@ -74,12 +170,7 @@ def merge_labels(
         Label image after region merging. Same shape as `labels`. Label values may
         be relabeled by the merging procedure.
     rag : graph.RAG
-        The region adjacency graph built from the original inputs. Edge attributes
-        are updated with:
-          - 'count': original boundary pixel count (if present from rag construction)
-          - 'rel_contact_max': maximum of the two relative contact areas between the
-            pair of adjacent regions (float in [0, 1])
-          - 'weight': original edge weights.
+        The region adjacency graph built from the original inputs
 
     Raises
     ------
@@ -96,11 +187,8 @@ def merge_labels(
             )
         edge_map = gaussian_edge_map(image, sigma=sigma)
 
-    rag = graph.rag_boundary(labels, edge_map, connectivity=1)
-
-    # Calculate total surface per node
+    rag = build_rag(labels, cellprob, edge_map)
     total_surface = calc_surface(rag)
-    label_volume = calc_volume(labels)
 
     def _rel_contact(node: int, edge_data: dict) -> float:
         """Edge contact relative to total label surface"""
@@ -108,22 +196,11 @@ def merge_labels(
         tot_surface = total_surface.get(node, 0) or 1
         return float(edge_contact / tot_surface)
 
-    def _sphericity(node: int) -> float:
-        """Label sphericity. Assign sphericity np.nan to background"""
-        surface = total_surface.get(node, 0) or 1
-        volume = label_volume.get(node)
-        return calc_sphericity(surface, volume) if node != 0 else np.nan
-
-    # Calculate edge contact area relative to total label area and minimum sphericity
-    # per label
+    # Calculate edge contact area relative to total label area
     for u, v, d in rag.edges(data=True):
         rel_u = _rel_contact(u, d)
         rel_v = _rel_contact(v, d)
         d["rel_contact_max"] = max(rel_u, rel_v)
-
-        sph_u = _sphericity(u)
-        sph_v = _sphericity(v)
-        d["min_sphericity"] = np.nanmin([sph_u, sph_v])
 
     # Make edge unmergeable if the contact area is below the threshold, then optionally
     # consider only edges that connect to at least a node with a sphericity lower than
@@ -135,10 +212,8 @@ def merge_labels(
             d["weight"] = 1.0
         elif d["rel_contact_max"] < rel_contact_thresh:
             d["weight"] = 1.0
-        elif sphericity_thresh and (d["min_sphericity"] > sphericity_thresh):
-            d["weight"] = 1.0
 
-    merged = graph.cut_threshold(labels.copy(), rag_th, edge_thresh, in_place=False)
+    merged = graph.cut_threshold(labels.copy(), rag_th, weight_thresh, in_place=False)
 
     return merged, rag
 
@@ -154,18 +229,6 @@ def calc_surface(rag: graph.RAG) -> dict[int, float]:
         total_surface[u] += c
         total_surface[v] += c
     return total_surface
-
-
-def calc_volume(labels: np.ndarray) -> dict[int, float]:
-    """Calculate label volume from a labeled array"""
-    counts = np.bincount(labels.ravel())
-    bins = np.unique(labels)
-    return {bin: count for bin, count in zip(bins, counts)}
-
-
-def calc_sphericity(area: float, volume: float) -> float:
-    """Calculate sphericity from object area and volume"""
-    return (np.pi ** (1 / 3)) * ((6 * volume) ** (2 / 3)) / area
 
 
 @gpu_dispatch(return_to_host=True)
@@ -404,5 +467,5 @@ def median_filter(cellprob_array: ArrayLike, size: int = 3) -> np.ndarray:
     """
     Applies a 3D median filter, using GPU acceleration if possible.
     """
-    cellprob_smoothed = ndi.median_filter(cellprob_array, size=size)
+    cellprob_smoothed = ndi.median_filter(cellprob_array, size=size, mode="nearest")
     return cellprob_smoothed

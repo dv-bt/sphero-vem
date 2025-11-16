@@ -234,16 +234,14 @@ class CustomJSONEncoder(json.JSONEncoder):
 def create_ome_multiscales(group: zarr.Group, multichannel: bool = False) -> None:
     """Create multiscales specifications compliant with OME-NGFF format v0.5.
 
-    Scale directories should named "{spacing_z}-{spacing_y}-{spacing_x}", where
+    Scale directories should named '{spacing_z}-{spacing_y}-{spacing_x}', where
     spacing is in nanometers. Arrays that do not follow this naming will be ignored.
     If multichannel is true, create a channel axis as CZYX.
     """
 
     keys = list(group.array_keys())
     scale_names = [i for i in keys if re.match(r"\d+-\d+-\d+", i)]
-    pixel_size_nm = {
-        name: tuple(int(i) for i in name.split("-")) for name in scale_names
-    }
+    pixel_size_nm = {name: spacing_from_dirname(name) for name in scale_names}
 
     spatial_axes = [
         {"name": "z", "type": "space", "unit": "nanometer"},
@@ -274,3 +272,9 @@ def create_ome_multiscales(group: zarr.Group, multichannel: bool = False) -> Non
             ],
         }
     ]
+
+
+def spacing_from_dirname(dirname) -> tuple[int, int, int]:
+    """Convenience function to extract spacing from directory name in the format
+    '{spacing_z}-{spacing_y}-{spacing_x}'"""
+    return tuple(int(i) for i in dirname.split("-"))

@@ -10,6 +10,7 @@ from .misc import (
     vprint,
     infer_dataset,
     create_ome_multiscales,
+    spacing_from_dirname,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "vprint",
     "infer_dataset",
     "create_ome_multiscales",
+    "spacing_from_dirname",
 ]
