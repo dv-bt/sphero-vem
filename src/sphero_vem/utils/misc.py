@@ -231,11 +231,12 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def create_ome_multiscales(group: zarr.Group):
+def create_ome_multiscales(group: zarr.Group, multichannel: bool = False) -> None:
     """Create multiscales specifications compliant with OME-NGFF format v0.5.
 
     Scale directories should named "{spacing_z}-{spacing_y}-{spacing_x}", where
     spacing is in nanometers. Arrays that do not follow this naming will be ignored.
+    If multichannel is true, create a channel axis as CZYX.
     """
 
     keys = list(group.array_keys())
@@ -244,22 +245,28 @@ def create_ome_multiscales(group: zarr.Group):
         name: tuple(int(i) for i in name.split("-")) for name in scale_names
     }
 
+    spatial_axes = [
+        {"name": "z", "type": "space", "unit": "nanometer"},
+        {"name": "y", "type": "space", "unit": "nanometer"},
+        {"name": "x", "type": "space", "unit": "nanometer"},
+    ]
+
+    # Hanlde multichannel
+    channel_axis = [{"name": "c", "type": "channel"}] if multichannel else []
+    channel_scale = [1] if multichannel else []
+
     group.attrs["multiscales"] = [
         {
             "version": "0.5",
             "name": "images",
-            "axes": [
-                {"name": "z", "type": "space", "unit": "nanometer"},
-                {"name": "y", "type": "space", "unit": "nanometer"},
-                {"name": "x", "type": "space", "unit": "nanometer"},
-            ],
+            "axes": channel_axis + spatial_axes,
             "datasets": [
                 {
                     "path": s,
                     "coordinateTransformations": [
                         {
                             "type": "scale",
-                            "scale": list(pixel_size_nm[s]),
+                            "scale": channel_scale + list(pixel_size_nm[s]),
                         }
                     ],
                 }

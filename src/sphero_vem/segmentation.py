@@ -24,6 +24,7 @@ from sphero_vem.utils import (
     read_manifest,
     timestamp,
     vprint,
+    create_ome_multiscales,
 )
 from sphero_vem.postprocessing import decompose_flow, median_filter
 
@@ -500,7 +501,7 @@ def segment_stack(config: SegmentationConfig) -> None:
 
     data_root = zarr.open_group(config.root_path, mode="r")
     images_zarr = data_root["images"][config.spacing_dir]
-    volume_stack = images_zarr[:]
+    volume_stack: np.ndarray = images_zarr[:]
     cellpose_model = models.CellposeModel(gpu=True, pretrained_model=config.model_dir)
 
     time_start = datetime.now()
@@ -543,20 +544,24 @@ def segment_stack(config: SegmentationConfig) -> None:
     # Saving flows
     vprint("Saving flows", config.verbose)
 
-    save_root = zarr.open_group(config.out_path, "a")
+    # Create zarr tree
+    save_root = zarr.open_group(config.out_path, mode="a")
     labels_group = save_root.require_group("labels")
-    flows_group = labels_group.require_group("flows")
+    seg_group = labels_group.require_group(config.seg_target)
+    flows_group = seg_group.require_group("flows")
+    cellprob_group = flows_group.require_group("cellprob")
+    dp_group = flows_group.require_group("dP")
 
     compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    cellprob_arr = flows_group.create_array(
-        "cellprob",
+    cellprob_arr = cellprob_group.create_array(
+        config.spacing_dir,
         shape=cellprob.shape,
         chunks=config.zarr_chunks,
         dtype="f2",
         compressors=compressor,
     )
-    dp_arr = flows_group.create_array(
-        "dP",
+    dp_arr = dp_group.create_array(
+        config.spacing_dir,
         shape=dP.shape,
         chunks=(3, *config.zarr_chunks),
         dtype="f2",
@@ -567,7 +572,9 @@ def segment_stack(config: SegmentationConfig) -> None:
     dp_arr[...] = dP
 
     # Update metadata
-    for arr in flows_group.arrays():
+    for arr in [cellprob_arr, dp_arr]:
         arr.attrs["spacing"] = config.spacing
-        arr.attrs["processing"] = volume_stack.attrs.get("processing") + processing
-        arr.attrs["inputs"] = volume_stack.path
+        arr.attrs["processing"] = images_zarr.attrs.get("processing") + processing
+        arr.attrs["inputs"] = images_zarr.path
+    create_ome_multiscales(cellprob_group)
+    create_ome_multiscales(dp_arr, multichannel=True)
