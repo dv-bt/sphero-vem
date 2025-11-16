@@ -4,7 +4,7 @@ This module contains functions and classes used for segmentation
 
 import os
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 import logging
 import json
 from datetime import datetime
@@ -430,12 +430,9 @@ class SegmentationParams:
     """Parameters passed to the cellpose_model.eval() to calculate flows"""
 
     batch_size: int = 64
-    flow3D_smooth: int = 2
     cellprob_threshold: float = 0.0
-    tile_overlap: float = 0.2
     niter: int = 200
     flow_threshold: float = 0.4
-    augment: bool = False
 
 
 @dataclass
@@ -445,11 +442,14 @@ class SegmentationConfig:
     root_path: Path
     model: str
     spacing_dir: str
-    seg_params: SegmentationParams
     out_path: Path | None = None
     verbose: bool = True
     out_dir: Path | None = None
     zarr_chunks: tuple[int, int, int] | None = None
+    batch_size: int = 64
+    flow3D_smooth: int = 2
+    augment: bool = False
+    tile_overlap: float = 0.2
     median_filter_cellprob: int | None = 3
     decompose_flows: bool = False
     decompose_flows_pad_fraction: float = 0.3
@@ -476,20 +476,22 @@ class SegmentationConfig:
     def _get_chunks(self) -> tuple[int, int, int]:
         """Define chunks as (1, H, W)"""
         zarr_root = zarr.open_group(self.root_path, mode="r")
-        return (1, *zarr_root["image"][self.spacing_dir].shape[1:])
+        return (1, *zarr_root["images"][self.spacing_dir].shape[1:])
 
 
 def segment_stack(config: SegmentationConfig) -> None:
     """Segment volume stack using config as input. This function calculates flows and
     cell probability, masks have to be calculated in a following step."""
-    seg_params = asdict(config.seg_params)
 
     processing = [
         {
             "step": "segmentation",
             "model": config.model,
             "seg_target": config.seg_target,
-            **seg_params,
+            "batch_size": config.batch_size,
+            "flow3D_smooth": config.flow3D_smooth,
+            "augment": config.augment,
+            "tile_overlap": config.tile_overlap,
             "median_filter_cellprob": config.median_filter_cellprob,
             "decompose_flows": config.decompose_flows,
             "decompose_flows_pad_fraction": config.decompose_flows_pad_fraction,
@@ -510,7 +512,11 @@ def segment_stack(config: SegmentationConfig) -> None:
             do_3D=True,
             channel_axis=1,
             z_axis=0,
-            compute_masks=False**seg_params,
+            batch_size=config.batch_size,
+            tile_overlap=config.tile_overlap,
+            flow3D_smooth=config.flow3D_smooth,
+            augment=config.augment,
+            compute_masks=False,
         )
 
     # Ensure GPU memory is garbage collected
