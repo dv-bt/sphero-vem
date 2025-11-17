@@ -196,6 +196,7 @@ def resample_array(
         output_shape=target_shape,
         output_chunks=temp_chunks,
         order=order,
+        mode="nearest",
     )
 
     # Ensure casting back to float16 if original was that dtype
