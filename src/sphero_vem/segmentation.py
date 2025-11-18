@@ -26,7 +26,9 @@ from sphero_vem.utils import (
     vprint,
     create_ome_multiscales,
     spacing_from_dirname,
+    dirname_from_spacing,
 )
+from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch
 from sphero_vem.postprocessing import decompose_flow, median_filter, merge_labels
 
 
@@ -672,3 +674,129 @@ def calculate_masks(config: SegmentationMaskParams):
     masks_arr.attrs["processing"] = processing
     masks_arr.attrs["inputs"] = [image_arr.path, cellprob_arr.path, dp_arr.path]
     create_ome_multiscales(masks_group)
+
+
+@gpu_dispatch(return_to_host=True)
+def _calc_seeds(
+    labels_lr: ArrayLike, erosion_iterations: int, zoom_factors: ArrayLike
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate high res seeds. Returns also low-res mask foreground."""
+
+    foreground_lr = labels_lr > 0
+    eroded_fg = foreground_lr
+    for _ in range(erosion_iterations):
+        eroded_fg = ndi.binary_erosion(eroded_fg)
+    seeds_lr = labels_lr * eroded_fg
+    seeds_hr = ndi.zoom(seeds_lr, zoom_factors, order=0)
+    return seeds_hr
+
+
+@gpu_dispatch(return_to_host=True)
+def _calc_foreground(
+    cellprob_hr: ArrayLike,
+    cellprob_threshold: float,
+) -> np.ndarray:
+    """Calculate high res mask"""
+    foreground_hr = cellprob_hr > cellprob_threshold
+    return foreground_hr
+
+
+@gpu_dispatch(return_to_host=True)
+def _region_fill(
+    seeds_hr: ArrayLike, foreground_hr: ArrayLike, max_expansion_steps: int = 10
+) -> np.ndarray:
+    """Region fill aglorithm. Runs for at most max_expansion_steps"""
+    structure = ndi.generate_binary_structure(rank=3, connectivity=1)
+
+    # Create dilation buffer to save memory
+    dilation_buffer = xp.empty_like(seeds_hr)
+
+    for i in range(max_expansion_steps):
+        ndi.grey_dilation(seeds_hr, footprint=structure, output=dilation_buffer)
+        should_fill = (seeds_hr == 0) & foreground_hr & (dilation_buffer > 0)
+        if not xp.any(should_fill):
+            break
+        seeds_hr[should_fill] = dilation_buffer[should_fill]
+
+    # Trim any accidental overflows
+    seeds_hr *= foreground_hr
+    return seeds_hr
+
+
+def upsample_region_fill(
+    labels_lr: np.ndarray,
+    cellprob_hr: np.ndarray,
+    erosion_iterations: int = 2,
+    cellprob_threshold: float = 0.0,
+    max_expansion_steps: int = 10,
+) -> np.ndarray:
+    """
+    Upsample cellpose labels with a region fill algorithm using thresholded cellprob
+    logits.
+    """
+
+    zoom_factors = np.array(cellprob_hr.shape) / np.array(labels_lr.shape)
+
+    seeds_hr = _calc_seeds(labels_lr, erosion_iterations, zoom_factors)
+    foregroung_hr = _calc_foreground(cellprob_hr, cellprob_threshold)
+    labels_hr = _region_fill(
+        seeds_hr, foregroung_hr, max_expansion_steps=max_expansion_steps
+    )
+
+    return labels_hr.astype(labels_lr.dtype)
+
+
+def upsample_masks(
+    root_path: Path,
+    seg_target: str,
+    target_spacing: tuple[int, int, int],
+    src_spacing: tuple[int, int, int] = (100, 100, 100),
+    erosion_iterations: int = 2,
+    cellprob_threshold: float = 0.0,
+    store_chunks: tuple[int, int, int] = (1, 1024, 1024),
+) -> None:
+    """Upsample cellpose labels"""
+
+    root = zarr.open_group(root_path, mode="a")
+    labels_lr_zarr: zarr.Array = root.get(
+        f"labels/{seg_target}/masks/{dirname_from_spacing(src_spacing)}"
+    )
+    cellprob_hr_zarr: zarr.Array = root.get(
+        f"labels/{seg_target}/flows/cellprob/{dirname_from_spacing(target_spacing)}"
+    )
+
+    labels_lr: np.ndarray = labels_lr_zarr[:]
+    cellprob_hr: np.ndarray = cellprob_hr_zarr[:]
+    labels_hr = upsample_region_fill(
+        labels_lr,
+        cellprob_hr,
+        erosion_iterations=erosion_iterations,
+        cellprob_threshold=cellprob_threshold,
+    )
+
+    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+
+    labels_group = root.get(f"labels/{seg_target}/masks/")
+    labels_hr_zarr = labels_group.create_array(
+        dirname_from_spacing(target_spacing),
+        shape=labels_hr.shape,
+        chunks=store_chunks,
+        dtype=labels_hr.dtype,
+        compressors=compressor,
+        overwrite=True,
+    )
+    labels_hr_zarr[...] = labels_hr
+
+    # Update metadata
+    processing = labels_lr_zarr.attrs.get("processing") + [
+        {
+            "step": "upsample masks",
+            "erosion_iterations": erosion_iterations,
+            "cellprob_threshold": cellprob_threshold,
+        }
+    ]
+
+    labels_hr_zarr.attrs["spacing"] = target_spacing
+    labels_hr_zarr.attrs["processing"] = processing
+    labels_hr_zarr.attrs["inputs"] = [labels_lr_zarr.path, cellprob_hr_zarr.path]
+    create_ome_multiscales(labels_group)
