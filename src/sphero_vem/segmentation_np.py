@@ -1,5 +1,7 @@
 """
 Nanoparticle segmentation
+
+TODO: standardize spacing vs spacing_dir input
 """
 
 import json
@@ -40,7 +42,7 @@ class NanoparticleConfig:
     min_size: int = 20
     posterior_th: float = 0.95
     beta_params: tuple[float, float] = (1.0, 20.0)
-    save_prob: bool = False
+    zarr_chunks: tuple[int, int, int] = (1, 1024, 1024)
 
     def __post_init__(self) -> None:
         """Get image list"""
@@ -334,7 +336,7 @@ class NanoparticleSegmentation:
         posterior_arr = posterior_group.create_array(
             self.config.spacing_dir,
             shape=self.volume_stack.shape,
-            chunks=(1, *self.volume_stack.shape[1:]),
+            chunks=self.config.zarr_chunks,
             dtype="f2",
             compressors=compressor,
         )
@@ -368,3 +370,36 @@ class NanoparticleSegmentation:
 def bincount_ubyte(image: ArrayLike) -> np.ndarray:
     """Calculates image histogram with GPU acceleration"""
     return xp.bincount(image.ravel(), minlength=256).astype(xp.int64)
+
+
+def threshold_posterior(
+    root_path: Path, threshold: float, spacing_dir: str, verbose: bool = True
+) -> None:
+    """Threshold nanoparticle posterior such that posterior >= threshold"""
+    root = zarr.open_group(root_path, mode="a")
+    posterior_zarr: zarr.Array = root.get(f"labels/nps/posterior/{spacing_dir}")
+    masks_group = root.require_group("labels/nps/masks/")
+
+    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+    masks_zarr = masks_group.create_array(
+        spacing_dir,
+        overwrite=True,
+        shape=posterior_zarr.shape,
+        chunks=posterior_zarr.chunks,
+        dtype=bool,
+        compressors=compressor,
+    )
+
+    # Do thresholding slice-wise to save memory
+    for idx in tqdm(
+        range(posterior_zarr.shape[0]), "Thresholding posterior", disable=not verbose
+    ):
+        masks_zarr[idx] = posterior_zarr[idx] >= threshold
+
+    # Metadata
+    masks_zarr.attrs["spacing"] = posterior_zarr.attrs["spacing"]
+    masks_zarr.attrs["processing"] = posterior_zarr.attrs["processing"] + [
+        {"step": "thresholding", "threshold": threshold}
+    ]
+    masks_zarr.attrs["inputs"] = posterior_zarr.path
+    create_ome_multiscales(masks_group)
