@@ -24,6 +24,7 @@ dependencies = [
     "simpleitk (>=2.5.2,<3.0.0)",
     "jsonargparse (>=4.40.2,<5.0.0)",
     "tyro (>=0.9.31,<0.10.0)",
+    "dask-image (>=2025.11.0,<2026.0.0)",
 ]
 
 [tool.poetry]
@@ -46,8 +47,8 @@ wandb = "^0.19.10"
 
 [tool.poetry.group.gpu.dependencies]
 cupy-cuda12x = "^13.6.0"
-dask-image = "^2024.5.3"
 dask-cuda = "^25.10.0"
+cucim = "^23.10.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
