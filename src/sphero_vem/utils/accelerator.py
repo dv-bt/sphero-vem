@@ -13,6 +13,7 @@ import functools
 
 import numpy as np
 import numpy.typing as npt
+import dask.array as da
 
 
 # --- Typing ---
@@ -42,12 +43,14 @@ GPU_AVAILABLE = False
 try:
     import cupy as _cp
     import cupyx.scipy.ndimage as _ndi
+    import cucim.skimage as _ski
 
     cp = _cp
     xp = _cp
     GPU_AVAILABLE = True
 except Exception:
     import scipy.ndimage as _ndi
+    import skimage as _ski
 
     warnings.warn(
         "cupy is not installed/available. Falling back to numpy (CPU).",
@@ -57,6 +60,7 @@ except Exception:
 
 # Updates ndimage
 ndi = _ndi
+ski = _ski
 
 
 # --- Helpers ---
@@ -95,7 +99,11 @@ def _map_arrays(obj, fn):
     return obj
 
 
-def gpu_dispatch(*, return_to_host: bool = False):
+def gpu_dispatch(
+    *,
+    return_to_host: bool = False,
+    host_kwarg: str = "_to_host",
+):
     """
     Decorator that dispatches function inputs to GPU, if available, before the call.
 
@@ -104,22 +112,68 @@ def gpu_dispatch(*, return_to_host: bool = False):
 
     Parameters
     ----------
-    return_to_host : bool
-        Convert the result back to a numpy array. Default is False
+    return_to_host : bool, optional
+        Default behavior for the wrapped function:
+        - False (default): return arrays on the active device (CuPy if GPU, NumPy otherwise)
+        - True: always convert result back to NumPy if GPU is used
+    host_kwarg : str, optional
+        Name of a special keyword argument that can override `return_to_host` at
+        *call time*. The kwarg is popped from kwargs and never forwarded to the
+        wrapped function.
     """
 
     def decorate(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            use_gpu = GPU_AVAILABLE and (cp is not None)  # uses your globals
+            use_gpu = GPU_AVAILABLE and (cp is not None)
+
+            # Call-time override, if provided
+            host_flag = kwargs.pop(host_kwarg, return_to_host)
+
             if use_gpu:
                 args = tuple(_map_arrays(a, to_device) for a in args)
                 kwargs = {k: _map_arrays(v, to_device) for k, v in kwargs.items()}
+
             out = func(*args, **kwargs)
-            if use_gpu and return_to_host:
+
+            if use_gpu and host_flag:
                 return _map_arrays(out, to_host)
             return out
 
         return wrapper
 
     return decorate
+
+
+def da_to_device(x: da.Array) -> da.Array:
+    """Convert Dask array blocks to CuPy or NumPy depending on availability."""
+    if GPU_AVAILABLE and cp is not None:
+        meta = cp.empty((0,) * x.ndim, dtype=x.dtype)
+    else:
+        meta = np.empty((0,) * x.ndim, dtype=x.dtype)
+
+    return da.map_blocks(to_device, x, meta=meta)
+
+
+def da_to_host(x: da.Array) -> da.Array:
+    """Return a Dask array whose blocks are NumPy ndarrays on host memory."""
+
+    # If there's no GPU / CuPy, just ensure NumPy arrays
+    if not (GPU_AVAILABLE and cp is not None):
+        if isinstance(x._meta, np.ndarray):
+            return x
+        return x.map_blocks(
+            np.asarray,
+            meta=np.empty((0,) * x.ndim, dtype=x.dtype),
+        )
+
+    # GPU path: convert each block cp.ndarray -> np.ndarray
+    def _to_host_block(block):
+        if isinstance(block, cp.ndarray):
+            return cp.asnumpy(block)
+        return np.asarray(block)
+
+    return x.map_blocks(
+        _to_host_block,
+        meta=np.empty((0,) * x.ndim, dtype=x.dtype),
+    )

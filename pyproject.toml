@@ -47,8 +47,8 @@ wandb = "^0.19.10"
 
 [tool.poetry.group.gpu.dependencies]
 cupy-cuda12x = "^13.6.0"
-dask-cuda = "^25.10.0"
 cucim = "^23.10.0"
+dask-cuda = {extras = ["cu12"], version = "^25.10.0"}
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

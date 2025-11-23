@@ -8,7 +8,7 @@ import tifffile
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 from sphero_vem.preprocessing import downscale_image, downscale_labels, downscale_tensor
-from sphero_vem.utils import read_manifest, create_ome_multiscales
+from sphero_vem.utils import read_manifest, create_ome_multiscales, dirname_from_spacing
 
 
 def write_image(
@@ -106,12 +106,14 @@ def read_tensor(
 
 def stack_to_zarr(
     stack_dir: Path,
-    dest_path: Path,
+    root_path: Path,
     spacing: tuple[int, int, int] | None,
-    chunk_size: tuple[int, int, int] | None = None,
+    chunk_size: tuple[int, int, int] = (1, 1024, 1024),
     verbose: bool = True,
 ) -> None:
     """Convert a tiff stack to a ZYX zarr archive.
+
+    The stack will be saved under root/images/spacing_dir
 
     Parameters
     ----------
@@ -119,7 +121,7 @@ def stack_to_zarr(
         Path to the tiff stack. This should be a directory with single tif slices that
         will be concatened along the Z axis.
     dest_path : Path
-        Path the destination zarr group.
+        Path the root of the destination zarr store.
     spacing : tuple[int, int, int] | None
         ZYX spacing of the dataset in nanometers. If None, attempt to read the spacing
         from metadata (Currently not implemented).
@@ -143,14 +145,12 @@ def stack_to_zarr(
         image_dtype = tif.pages[0].dtype
 
     stack_shape = (len(image_paths), *image_shape)
-    if not chunk_size:
-        chunk_size = (1, *image_shape)
 
     compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    zarr_root = zarr.open(dest_path, mode="a")
+    zarr_root = zarr.open(root_path, mode="a")
     image_group = zarr_root.require_group("images")
     zarr_arr = image_group.create_array(
-        "-".join([str(i) for i in spacing]),
+        dirname_from_spacing(spacing),
         shape=stack_shape,
         chunks=chunk_size,
         dtype=image_dtype,

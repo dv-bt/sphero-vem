@@ -175,6 +175,8 @@ def create_ome_multiscales(group: zarr.Group, multichannel: bool = False) -> Non
 
     keys = list(group.array_keys())
     scale_names = [i for i in keys if re.match(r"\d+-\d+-\d+", i)]
+    # Sort by voxel size to have correct multiscale order
+    scale_names.sort(key=np.prod(spacing_from_dirname))
     pixel_size_nm = {name: spacing_from_dirname(name) for name in scale_names}
 
     spatial_axes = [

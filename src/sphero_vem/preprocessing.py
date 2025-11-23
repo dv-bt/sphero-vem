@@ -12,13 +12,12 @@ from torchvision import tv_tensors
 import torchvision.transforms.v2 as transforms
 from torchvision.transforms.functional import resize
 import zarr
-from zarr.codecs import BloscCodec, BloscShuffle
-import dask
 import dask.array as da
 from dask.diagnostics import ProgressBar
 import dask_image.ndinterp
 import dask_image
 from sphero_vem.utils import dirname_from_spacing, create_ome_multiscales
+from sphero_vem.utils.accelerator import da_to_device, xp, da_to_host
 
 
 class Normalize(torch.nn.Module):
@@ -155,12 +154,9 @@ def resample_array(
     array_path: str,
     target_spacing: tuple[int, int, int],
     order: int = 1,
-    num_workers: int = 1,
+    zarr_chunks: tuple[int, int, int] = (1, 1024, 1024),
 ) -> None:
-    """Resample an array in a Zarr archive to have the target spacing.
-
-    # TODO: add support for GPU acceleration.
-    """
+    """Resample an array in a Zarr archive to have the target spacing."""
 
     root = zarr.open_group(zarr_path)
     src_array: zarr.Array = root.get(array_path)
@@ -172,25 +168,23 @@ def resample_array(
     original_shape = src_array.shape
 
     spacing_dir = dirname_from_spacing(target_spacing)
-    ref_array: zarr.Array = root.get(f"images/{spacing_dir}")
-    if not ref_array:
-        raise NotImplementedError(
-            "Arbitrary spacing not yet supported. "
-            "Please specify a spacing that is already under images/"
-        )
-    target_shape = ref_array.shape
+    try:
+        ref_array: zarr.Array = root.get(f"images/{spacing_dir}")
+        target_shape = ref_array.shape
+    except AttributeError:
+        ratio = np.asarray(src_array.attrs["spacing"]) / np.asarray(target_spacing)
+        target_shape = ratio * original_shape
+        target_shape = target_shape.astype(int).tolist()
     scale_factors = np.array(original_shape) / np.array(target_shape)
     scaling_matrix = np.diag(scale_factors)
 
     ## Assign dask array
-    temp_chunks = (8, 512, 512)
-    src_dask = da.from_zarr(src_array)
-    src_dask = src_dask.rechunk(temp_chunks)
-
-    # If float16 recast to float32
-    if src_dask.dtype == np.float16:
-        src_dask = src_dask.astype(np.float32)
-    resampled_array = dask_image.ndinterp.affine_transform(
+    temp_chunks = (8, 1024, 1024)
+    src_dask: da.Array = da.from_zarr(src_array).rechunk(temp_chunks)
+    src_dask: da.Array = da_to_device(src_dask)
+    if src_dask.dtype == xp.float16:
+        src_dask = src_dask.astype(xp.float32)
+    resampled_dask = dask_image.ndinterp.affine_transform(
         src_dask,
         matrix=scaling_matrix,
         output_shape=target_shape,
@@ -198,40 +192,25 @@ def resample_array(
         order=order,
         mode="nearest",
     )
+    resampled_dask = da_to_host(resampled_dask)
 
-    # Ensure casting back to float16 if original was that dtype
-    if src_array.dtype == np.float16:
-        resampled_array = resampled_array.astype(np.float16)
-
-    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
     parent_group: zarr.Group = root.get(str(Path(src_array.path).parent))
 
-    tmp_zarr_path = f"{parent_group.path}/{spacing_dir}__tmp"
-    tmp_zarr = root.require_array(
-        name=tmp_zarr_path,
+    dst_zarr_path = f"{parent_group.path}/{spacing_dir}"
+    dst_zarr = root.require_array(
+        name=dst_zarr_path,
         shape=target_shape,
-        chunks=temp_chunks,
+        chunks=zarr_chunks,
         dtype=src_array.dtype,
-        compressors=compressor,
+        compressors=src_array.compressors,
         overwrite=True,
     )
 
     with ProgressBar():
-        with dask.config.set(scheduler="threads", num_workers=num_workers):
-            resampled_array.to_zarr(
-                tmp_zarr,
-                overwrite=True,
-            )
-
-    dst_zarr_path = f"{parent_group.path}/{spacing_dir}"
-    dst_zarr = rechunk_array(
-        root,
-        tmp_zarr_path,
-        dst_zarr_path,
-        copy_attributes=False,
-        delete_src=True,
-        verbose=True,
-    )
+        resampled_dask.to_zarr(
+            dst_zarr,
+            overwrite=True,
+        )
 
     # Array metadata
     dst_zarr.attrs["spacing"] = target_spacing
@@ -272,10 +251,11 @@ def rechunk_array(
     )
 
     for z in tqdm(range(src_zarr.shape[0]), disable=not verbose):
-        dst_zarr[z, :, :] = src_zarr[z, :, :]
+        dst_zarr[z] = src_zarr[z]
 
     if copy_attributes:
-        dst_zarr.attrs = src_zarr.attrs
+        dst_zarr.attrs.clear()
+        dst_zarr.attrs.update(dict(src_zarr.attrs))
 
     if delete_src:
         del root[src_array_path]
