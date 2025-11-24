@@ -1,5 +1,6 @@
 """Module containing input/output functions"""
 
+from typing import Any
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
@@ -7,8 +8,15 @@ import torch
 import tifffile
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
+import dask.array as da
+from dask.diagnostics import ProgressBar
 from sphero_vem.preprocessing import downscale_image, downscale_labels, downscale_tensor
-from sphero_vem.utils import read_manifest, create_ome_multiscales, dirname_from_spacing
+from sphero_vem.utils import (
+    read_manifest,
+    create_ome_multiscales,
+    dirname_from_spacing,
+    spacing_from_dirname,
+)
 
 
 def write_image(
@@ -171,3 +179,56 @@ def stack_to_zarr(
     zarr_arr.attrs["processing"] = manifest["processing"]
     zarr_arr.attrs["inputs"] = [str(path) for path in image_paths]
     create_ome_multiscales(image_group)
+
+
+def write_zarr(
+    root: zarr.group,
+    array: np.ndarray | da.Array,
+    dst_path: str,
+    src_zarr: zarr.Array,
+    dtype: Any | None = None,
+    shape: tuple[int] | None = None,
+    spacing: tuple[int, int, int] | None = None,
+    processing: list[dict] | dict | None = None,
+    inputs: list[str] | None = None,
+    zarr_chunks: tuple[int, int, int] = (1, 1024, 1024),
+) -> None:
+    """Write numpy or dask array to zarr."""
+
+    group_path = str(Path(dst_path).parent)
+
+    # Assume that spacing is correctly specified in destination name
+    if not spacing:
+        spacing = spacing_from_dirname(Path(dst_path).name)
+
+    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+    dst_zarr = root.require_array(
+        dst_path,
+        shape=shape if shape else array.shape,
+        chunks=zarr_chunks,
+        compressors=compressor,
+        dtype=dtype if dtype else array.dtype,
+        overwrite=True,
+    )
+
+    if isinstance(array, np.ndarray):
+        dst_zarr[...] = array
+    elif isinstance(array, da.Array):
+        with ProgressBar():
+            array.to_zarr(dst_zarr)
+    else:
+        raise TypeError(f"Unsuppored type {type(array)} for input array")
+
+    # Update default processing and inputs
+    if not processing:
+        processing = []
+    elif isinstance(processing, dict):
+        processing = [processing]
+
+    if not inputs:
+        inputs = [src_zarr.path]
+
+    dst_zarr.attrs["spacing"] = spacing
+    dst_zarr.attrs["processing"] = src_zarr.attrs.get("processing", []) + processing
+    dst_zarr.attrs["inputs"] = inputs
+    create_ome_multiscales(root.get(group_path))

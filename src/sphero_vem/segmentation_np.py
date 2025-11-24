@@ -13,10 +13,10 @@ import numpy as np
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 import dask.array as da
-from dask.diagnostics import ProgressBar
 from dask_image.ndfilters import gaussian_filter
 from scipy.optimize import minimize_scalar
 from scipy.ndimage import find_objects
+import skimage as ski_cpu
 from sphero_vem.utils import (
     CustomJSONEncoder,
     create_ome_multiscales,
@@ -32,6 +32,8 @@ from sphero_vem.utils.accelerator import (
     da_to_device,
     da_to_host,
 )
+from sphero_vem.io import write_zarr
+from sphero_vem.postprocessing import binary_closing, filter_and_relabel
 
 
 @dataclass
@@ -381,40 +383,6 @@ def bincount_ubyte(image: ArrayLike) -> np.ndarray:
     return xp.bincount(image.ravel(), minlength=256).astype(xp.int64)
 
 
-def threshold_posterior(
-    root_path: Path,
-    spacing: tuple[int, int, int],
-    threshold: float,
-) -> None:
-    """Threshold nanoparticle posterior such that posterior >= threshold"""
-    spacing_dir = dirname_from_spacing(spacing)
-
-    root = zarr.open_group(root_path, mode="a")
-    posterior_zarr: zarr.Array = root.get(f"labels/nps/posterior/{spacing_dir}")
-    masks_group = root.require_group("labels/nps/masks/")
-
-    posterior = posterior_zarr[:]
-
-    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    masks_zarr = masks_group.create_array(
-        spacing_dir,
-        overwrite=True,
-        shape=posterior_zarr.shape,
-        chunks=posterior_zarr.chunks,
-        dtype=bool,
-        compressors=compressor,
-    )
-    masks_zarr[...] = posterior >= threshold
-
-    # Metadata
-    masks_zarr.attrs["spacing"] = posterior_zarr.attrs["spacing"]
-    masks_zarr.attrs["processing"] = posterior_zarr.attrs["processing"] + [
-        {"step": "thresholding", "threshold": threshold}
-    ]
-    masks_zarr.attrs["inputs"] = posterior_zarr.path
-    create_ome_multiscales(masks_group)
-
-
 def downsample_posterior(
     root_path: Path,
     sigma: tuple[float, float, float],
@@ -429,16 +397,6 @@ def downsample_posterior(
     # Calculate downsampling parameters
     ds_ratio = np.asarray(dst_spacing) / np.asarray(src_spacing)
     final_shape = (src_zarr.shape // ds_ratio).astype(int).tolist()
-
-    # Create destination array
-    dst_zarr = root.require_array(
-        f"labels/nps/posterior/{dirname_from_spacing(dst_spacing)}",
-        overwrite=True,
-        shape=final_shape,
-        chunks=src_zarr.chunks,
-        dtype="f2",
-        compressors=src_zarr.compressors,
-    )
 
     ## Dask pipeline
     tmp_chunks = (64, 1000, 1000)
@@ -462,13 +420,79 @@ def downsample_posterior(
         trim_excess=True,
     )
     downsampled = da_to_host(downsampled)
-    with ProgressBar():
-        downsampled.to_zarr(dst_zarr)
 
-    # Array metadata
-    dst_zarr.attrs["spacing"] = src_zarr.attrs["spacing"]
-    dst_zarr.attrs["processing"] = src_zarr.attrs["processing"] + [
-        {"step": "downscaling", "sigma": sigma, "target spacing": dst_spacing}
-    ]
-    dst_zarr.attrs["inputs"] = src_zarr.path
-    create_ome_multiscales(root.get("labels/nps/posterior"))
+    write_zarr(
+        root,
+        downsampled,
+        dst_path=f"labels/nps/posterior/{dirname_from_spacing(dst_spacing)}",
+        src_zarr=src_zarr,
+        shape=final_shape,
+        dtype="f2",
+        processing={
+            "step": "downscaling",
+            "sigma": sigma,
+            "target spacing": dst_spacing,
+        },
+    )
+
+
+def label_nanoparticles(
+    root_path: Path,
+    spacing: tuple[int, int, int],
+    threshold: float,
+    radius: int = 1,
+    connectivity: int = 2,
+    min_size: int = 10,
+) -> None:
+    """Threshold posterior >= threshold and label nanoparticle binary masks.
+
+    Masks are first subject to a binary closing with given radius. Then, labeling is
+    done with the specified connectivity and labels smaller than min_size (in voxels)
+    are discarded. The volume is finally relabeled to have sequential label IDs.
+
+    Parameters
+    ----------
+    root_path : Path
+        Path to the root of the zarr store
+    spacing : tuple[int, int, int]
+        Spacing to use for the labeling
+    threshold : float
+        Theshold to apply to the nanoparticle posterior, such that posterior >= threshold.
+        It should be between 0 and 1.
+    radius : int
+        Radius in voxels for a ball element using during binary closing.
+        Default is 1.
+    connectivity : int
+        Connectivity used during labeling. Default is 2.
+    min_size : int
+        Minimimum label size in voxels. Labels with size < min_size will be discarded.
+        Default is 10.
+
+    """
+
+    root = zarr.open_group(root_path)
+    spacing_dir = dirname_from_spacing(spacing)
+
+    posterior_zarr: zarr.Array = root.get(f"labels/nps/posterior/{spacing_dir}")
+
+    # Threshold posterior
+    posterior = posterior_zarr[:]
+    masks = posterior >= threshold
+
+    # Label masks
+    masks_filt = binary_closing(masks, radius=radius)
+    masks_filt = ski_cpu.measure.label(masks_filt, connectivity=connectivity)
+    masks_filt = filter_and_relabel(masks_filt, min_size=min_size)
+
+    write_zarr(
+        root,
+        masks_filt,
+        dst_path=f"labels/nps/masks/{spacing_dir}",
+        src_zarr=posterior_zarr,
+        processing={
+            "step": "labeling",
+            "radius": radius,
+            "connectivity": connectivity,
+            "min_size": min_size,
+        },
+    )

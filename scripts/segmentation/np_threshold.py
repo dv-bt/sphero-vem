@@ -3,16 +3,26 @@ Theshold np posterior
 """
 
 from pathlib import Path
-from sphero_vem.segmentation_np import threshold_posterior, downsample_posterior
+from sphero_vem.segmentation_np import label_nanoparticles
 
 
 def main():
     root_path = Path("data/processed/segmented/Au_01-vol_01.zarr")
-    threshold = 0.95
-    sigma = (0.5, 1.5, 1.5)
     spacing = (50, 50, 50)
-    downsample_posterior(root_path, sigma, dst_spacing=spacing)
-    threshold_posterior(root_path, threshold=threshold, spacing_dir=spacing)
+
+    threshold = 0.95
+    radius = 1
+    connectivity = 2
+    min_size = 10
+
+    label_nanoparticles(
+        root_path,
+        spacing=spacing,
+        threshold=threshold,
+        radius=radius,
+        connectivity=connectivity,
+        min_size=min_size,
+    )
 
 
 if __name__ == "__main__":
