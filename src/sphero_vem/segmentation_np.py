@@ -12,9 +12,16 @@ from tqdm import tqdm
 import numpy as np
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
+import dask.array as da
+from dask.diagnostics import ProgressBar
+from dask_image.ndfilters import gaussian_filter
 from scipy.optimize import minimize_scalar
 from scipy.ndimage import find_objects
-from sphero_vem.utils import CustomJSONEncoder, create_ome_multiscales
+from sphero_vem.utils import (
+    CustomJSONEncoder,
+    create_ome_multiscales,
+    dirname_from_spacing,
+)
 from sphero_vem.utils.accelerator import (
     xp,
     gpu_dispatch,
@@ -22,6 +29,8 @@ from sphero_vem.utils.accelerator import (
     ndi,
     to_host,
     to_device,
+    da_to_device,
+    da_to_host,
 )
 
 
@@ -373,12 +382,18 @@ def bincount_ubyte(image: ArrayLike) -> np.ndarray:
 
 
 def threshold_posterior(
-    root_path: Path, threshold: float, spacing_dir: str, verbose: bool = True
+    root_path: Path,
+    spacing: tuple[int, int, int],
+    threshold: float,
 ) -> None:
     """Threshold nanoparticle posterior such that posterior >= threshold"""
+    spacing_dir = dirname_from_spacing(spacing)
+
     root = zarr.open_group(root_path, mode="a")
     posterior_zarr: zarr.Array = root.get(f"labels/nps/posterior/{spacing_dir}")
     masks_group = root.require_group("labels/nps/masks/")
+
+    posterior = posterior_zarr[:]
 
     compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
     masks_zarr = masks_group.create_array(
@@ -389,12 +404,7 @@ def threshold_posterior(
         dtype=bool,
         compressors=compressor,
     )
-
-    # Do thresholding slice-wise to save memory
-    for idx in tqdm(
-        range(posterior_zarr.shape[0]), "Thresholding posterior", disable=not verbose
-    ):
-        masks_zarr[idx] = posterior_zarr[idx] >= threshold
+    masks_zarr[...] = posterior >= threshold
 
     # Metadata
     masks_zarr.attrs["spacing"] = posterior_zarr.attrs["spacing"]
@@ -403,3 +413,62 @@ def threshold_posterior(
     ]
     masks_zarr.attrs["inputs"] = posterior_zarr.path
     create_ome_multiscales(masks_group)
+
+
+def downsample_posterior(
+    root_path: Path,
+    sigma: tuple[float, float, float],
+    dst_spacing: tuple[int, int, int],
+    src_spacing: tuple[int, int, int] = (50, 10, 10),
+) -> None:
+    """Downsample posterior using average pooling after Gaussian antialiasing"""
+    root = zarr.open_group(root_path, mode="a")
+    spacing_dir = dirname_from_spacing(src_spacing)
+    src_zarr: zarr.Array = root.get(f"labels/nps/posterior/{spacing_dir}")
+
+    # Calculate downsampling parameters
+    ds_ratio = np.asarray(dst_spacing) / np.asarray(src_spacing)
+    final_shape = (src_zarr.shape // ds_ratio).astype(int).tolist()
+
+    # Create destination array
+    dst_zarr = root.require_array(
+        f"labels/nps/posterior/{dirname_from_spacing(dst_spacing)}",
+        overwrite=True,
+        shape=final_shape,
+        chunks=src_zarr.chunks,
+        dtype="f2",
+        compressors=src_zarr.compressors,
+    )
+
+    ## Dask pipeline
+    tmp_chunks = (64, 1000, 1000)
+    prob = da.from_zarr(src_zarr).rechunk(tmp_chunks)
+    prob = da_to_device(prob)
+    prob = prob.astype(xp.float32)
+
+    # Convert to logit and smooth
+    eps = 1e-5
+    prob = da.clip(prob, eps, 1 - eps)
+    logit = da.log(prob / (1 - prob))
+    logit_smooth = gaussian_filter(logit, sigma=sigma)
+    prob_smooth = 1 / (1 + da.exp(-logit_smooth))
+
+    # Average pooling
+    axes_dict = {i: int(ds_ratio[i]) for i in range(3)}
+    downsampled = da.coarsen(
+        xp.mean,
+        prob_smooth,
+        axes_dict,
+        trim_excess=True,
+    )
+    downsampled = da_to_host(downsampled)
+    with ProgressBar():
+        downsampled.to_zarr(dst_zarr)
+
+    # Array metadata
+    dst_zarr.attrs["spacing"] = src_zarr.attrs["spacing"]
+    dst_zarr.attrs["processing"] = src_zarr.attrs["processing"] + [
+        {"step": "downscaling", "sigma": sigma, "target spacing": dst_spacing}
+    ]
+    dst_zarr.attrs["inputs"] = src_zarr.path
+    create_ome_multiscales(root.get("labels/nps/posterior"))
