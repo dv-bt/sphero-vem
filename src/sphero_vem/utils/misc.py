@@ -165,25 +165,70 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def create_ome_multiscales(group: zarr.Group, multichannel: bool = False) -> None:
+def create_ome_multiscales(
+    group: zarr.Group,
+    multichannel: bool = False,
+    spatial_dims: int = 3,
+    scales: list[dict] | None = None,
+) -> None:
     """Create multiscales specifications compliant with OME-NGFF format v0.5.
 
-    Scale directories should named '{spacing_z}-{spacing_y}-{spacing_x}', where
-    spacing is in nanometers. Arrays that do not follow this naming will be ignored.
-    If multichannel is true, create a channel axis as CZYX.
+    Parameters
+    ----------
+    group : zarr.Group
+        Zarr group that contains the multiscale.
+    multichannel : bool
+        Whether a channel axis should be included. This is expected to be in C(Z)YX
+    spatial_dims : int
+        Number of spatial dimensions. Dimension order should be (Z)YX. Accepted values
+        are 2 or 3.
+    scales : list[dict] | None
+        List of dictionary of array paths and their respective spatial scale in nm.
+        Scaled should be ordered so that the pixel/voxel size is in ascending order
+        (i.e. from finer to coarser). If None, attempts to determine scale automatically
+        from array name, which is expected to be  '{spacing_z}-{spacing_y}-{spacing_x}';
+        in this case, arrays that do not follow this naming will be ignored.
+        Default is None
+        Example scales:
+        [
+            {"path": "0", "scale": [50, 50, 50]},
+            {"path": "1", "scale": [100, 100, 100]}
+        ]
+
+    Raises
+    ------
+    ValueError
+        If the number of spatial dimensions is not 2 or 3.
+
     """
 
-    keys = list(group.array_keys())
-    scale_names = [i for i in keys if re.match(r"\d+-\d+-\d+", i)]
-    # Sort by voxel size to have correct multiscale order
-    scale_names.sort(key=np.prod(spacing_from_dirname))
-    pixel_size_nm = {name: spacing_from_dirname(name) for name in scale_names}
-
     spatial_axes = [
-        {"name": "z", "type": "space", "unit": "nanometer"},
         {"name": "y", "type": "space", "unit": "nanometer"},
         {"name": "x", "type": "space", "unit": "nanometer"},
     ]
+    if spatial_dims == 3:
+        spatial_axes = [
+            {
+                "name": "z",
+                "type": "space",
+                "unit": "nanometer",
+            }
+        ] + spatial_axes
+    elif spatial_dims != 2:
+        raise ValueError(
+            f"Unsupported number of spatial dimensions {spatial_dims}. "
+            "Supported values are 2 (YX) or 3 (ZYX)."
+        )
+
+    # Attempt to automatically determine scales
+    if not scales:
+        keys = list(group.array_keys())
+        scale_names = [i for i in keys if re.match(r"\d+-\d+-\d+", i)]
+        # Sort by voxel size to have correct multiscale order
+        scale_names.sort(key=np.prod(spacing_from_dirname))
+        scales = [
+            {"path": name, "scale": spacing_from_dirname(name)} for name in scale_names
+        ]
 
     # Hanlde multichannel
     channel_axis = [{"name": "c", "type": "channel"}] if multichannel else []
@@ -196,15 +241,15 @@ def create_ome_multiscales(group: zarr.Group, multichannel: bool = False) -> Non
             "axes": channel_axis + spatial_axes,
             "datasets": [
                 {
-                    "path": s,
+                    "path": s["path"],
                     "coordinateTransformations": [
                         {
                             "type": "scale",
-                            "scale": channel_scale + list(pixel_size_nm[s]),
+                            "scale": channel_scale + list(s["scale"]),
                         }
                     ],
                 }
-                for s in scale_names
+                for s in scales
             ],
         }
     ]

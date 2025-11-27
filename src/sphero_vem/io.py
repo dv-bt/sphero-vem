@@ -192,6 +192,7 @@ def write_zarr(
     processing: list[dict] | dict | None = None,
     inputs: list[str] | None = None,
     zarr_chunks: tuple[int, int, int] = (1, 1024, 1024),
+    multiscales: list[dict] | None = None,
 ) -> None:
     """Write numpy or dask array to zarr."""
 
@@ -231,4 +232,4 @@ def write_zarr(
     dst_zarr.attrs["spacing"] = spacing
     dst_zarr.attrs["processing"] = src_zarr.attrs.get("processing", []) + processing
     dst_zarr.attrs["inputs"] = inputs
-    create_ome_multiscales(root.get(group_path))
+    create_ome_multiscales(root.get(group_path), scales=multiscales)
