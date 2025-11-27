@@ -48,6 +48,7 @@ def analyze_labels(root_path: Path, seg_target: str, spacing: tuple[int, int, in
         "inertia_tensor",
         "inertia_tensor_eigvals",
         "moments_central",
+        "bbox",
     ]
 
     props = ski.measure.regionprops_table(
