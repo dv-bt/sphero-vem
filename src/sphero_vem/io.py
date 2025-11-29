@@ -185,7 +185,7 @@ def write_zarr(
     root: zarr.group,
     array: np.ndarray | da.Array,
     dst_path: str,
-    src_zarr: zarr.Array,
+    src_zarr: zarr.Array | None = None,
     dtype: Any | None = None,
     shape: tuple[int] | None = None,
     spacing: tuple[int, int, int] | None = None,
@@ -221,15 +221,22 @@ def write_zarr(
         raise TypeError(f"Unsuppored type {type(array)} for input array")
 
     # Update default processing and inputs
+    if src_zarr:
+        src_processing = src_zarr.attrs.get("processing", [])
+    else:
+        src_processing = []
+
     if not processing:
         processing = []
     elif isinstance(processing, dict):
         processing = [processing]
 
-    if not inputs:
+    if not inputs and src_zarr:
         inputs = [src_zarr.path]
+    else:
+        inputs = []
 
     dst_zarr.attrs["spacing"] = spacing
-    dst_zarr.attrs["processing"] = src_zarr.attrs.get("processing", []) + processing
+    dst_zarr.attrs["processing"] = src_processing + processing
     dst_zarr.attrs["inputs"] = inputs
     create_ome_multiscales(root.get(group_path), scales=multiscales)

@@ -17,7 +17,7 @@ from dask.diagnostics import ProgressBar
 import dask_image.ndinterp
 import dask_image
 from sphero_vem.utils import dirname_from_spacing, create_ome_multiscales
-from sphero_vem.utils.accelerator import da_to_device, xp, da_to_host
+from sphero_vem.utils.accelerator import da_to_device, xp, da_to_host, ski
 
 
 class Normalize(torch.nn.Module):
@@ -155,6 +155,7 @@ def resample_array(
     target_spacing: tuple[int, int, int],
     order: int = 1,
     zarr_chunks: tuple[int, int, int] = (1, 1024, 1024),
+    antialiasing: bool = False,
 ) -> None:
     """Resample an array in a Zarr archive to have the target spacing."""
 
@@ -184,14 +185,22 @@ def resample_array(
     src_dask: da.Array = da_to_device(src_dask)
     if src_dask.dtype == xp.float16:
         src_dask = src_dask.astype(xp.float32)
-    resampled_dask = dask_image.ndinterp.affine_transform(
-        src_dask,
-        matrix=scaling_matrix,
-        output_shape=target_shape,
-        output_chunks=temp_chunks,
-        order=order,
-        mode="nearest",
-    )
+    if not antialiasing:
+        resampled_dask = dask_image.ndinterp.affine_transform(
+            src_dask,
+            matrix=scaling_matrix,
+            output_shape=target_shape,
+            output_chunks=temp_chunks,
+            order=order,
+            mode="nearest",
+        )
+    else:
+        resampled_dask = ski.transform.resize(
+            src_dask,
+            output_shape=target_shape,
+            order=order,
+            preserve_range=True,
+        )
     resampled_dask = da_to_host(resampled_dask)
 
     parent_group: zarr.Group = root.get(str(Path(src_array.path).parent))
@@ -219,6 +228,7 @@ def resample_array(
             "step": "resample",
             "order": order,
             "scale_factors": [float(i) for i in scale_factors],
+            "antialiasing": antialiasing,
         }
     ]
     dst_zarr.attrs["inputs"] = src_array.path
