@@ -7,8 +7,7 @@ numpy/cupy switch with a single `xp` and a safe `ArrayLike` type.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Union
-from typing import TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 import functools
 
 import numpy as np
@@ -16,54 +15,44 @@ import numpy.typing as npt
 import dask.array as da
 
 
-# --- Typing ---
-
+# Typing: consider only CPU libraries and minimal typing in this module.
+# This is to avoid excessive pylance slowdowns.
 if TYPE_CHECKING:
-    import cupy
+    cp = Any
+    xp = np
+    GPU_AVAILABLE = False
+    import skimage as ski
+    import scipy.ndimage as ndi
 
-    ArrayLike: TypeAlias = Union[npt.NDArray[Any], "cupy.ndarray"]
+    ArrayLike: TypeAlias = npt.NDArray[Any]
 else:
     ArrayLike: TypeAlias = npt.NDArray[Any]
+    # Defaults
+    xp = np
+    cp = None
+    GPU_AVAILABLE = False
 
+    try:
+        import cupy as _cp
+        import cupyx.scipy.ndimage as _ndi
+        import cucim.skimage as _ski
 
-# --- Backend selection ---
+        cp = _cp
+        xp = _cp
+        GPU_AVAILABLE = True
+    except Exception:
+        import scipy.ndimage as _ndi
+        import skimage as _ski
 
+        warnings.warn(
+            "cupy is not installed/available. Falling back to numpy (CPU).",
+            UserWarning,
+            stacklevel=2,
+        )
 
-class GPUFallbackWarning(UserWarning):
-    """Issued when cupy isn't available and the code falls back to numpy (CPU)"""
-
-    pass
-
-
-# Defaults
-xp = np
-cp = None
-GPU_AVAILABLE = False
-
-try:
-    import cupy as _cp
-    import cupyx.scipy.ndimage as _ndi
-    import cucim.skimage as _ski
-
-    cp = _cp
-    xp = _cp
-    GPU_AVAILABLE = True
-except Exception:
-    import scipy.ndimage as _ndi
-    import skimage as _ski
-
-    warnings.warn(
-        "cupy is not installed/available. Falling back to numpy (CPU).",
-        GPUFallbackWarning,
-        stacklevel=2,
-    )
-
-# Updates ndimage
-ndi = _ndi
-ski = _ski
-
-
-# --- Helpers ---
+    # Updates ndimage
+    ndi = _ndi
+    ski = _ski
 
 
 def to_host(arr: ArrayLike) -> npt.NDArray[Any]:
