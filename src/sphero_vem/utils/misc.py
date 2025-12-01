@@ -5,7 +5,6 @@ Utility functions
 import os
 import yaml
 import json
-import re
 from datetime import datetime
 import xxhash
 from pathlib import Path
@@ -169,7 +168,6 @@ def create_ome_multiscales(
     group: zarr.Group,
     multichannel: bool = False,
     spatial_dims: int = 3,
-    scales: list[dict] | None = None,
 ) -> None:
     """Create multiscales specifications compliant with OME-NGFF format v0.5.
 
@@ -182,18 +180,6 @@ def create_ome_multiscales(
     spatial_dims : int
         Number of spatial dimensions. Dimension order should be (Z)YX. Accepted values
         are 2 or 3.
-    scales : list[dict] | None
-        List of dictionary of array paths and their respective spatial scale in nm.
-        Scaled should be ordered so that the pixel/voxel size is in ascending order
-        (i.e. from finer to coarser). If None, attempts to determine scale automatically
-        from array name, which is expected to be  '{spacing_z}-{spacing_y}-{spacing_x}';
-        in this case, arrays that do not follow this naming will be ignored.
-        Default is None
-        Example scales:
-        [
-            {"path": "0", "scale": [50, 50, 50]},
-            {"path": "1", "scale": [100, 100, 100]}
-        ]
 
     Raises
     ------
@@ -220,15 +206,7 @@ def create_ome_multiscales(
             "Supported values are 2 (YX) or 3 (ZYX)."
         )
 
-    # Attempt to automatically determine scales
-    if not scales:
-        keys = list(group.array_keys())
-        scale_names = [i for i in keys if re.match(r"\d+-\d+-\d+", i)]
-        # Sort by voxel size to have correct multiscale order
-        scale_names.sort(key=np.prod(spacing_from_dirname))
-        scales = [
-            {"path": name, "scale": spacing_from_dirname(name)} for name in scale_names
-        ]
+    scales = get_multiscales(group)
 
     # Hanlde multichannel
     channel_axis = [{"name": "c", "type": "channel"}] if multichannel else []
@@ -265,3 +243,38 @@ def dirname_from_spacing(spacing: tuple[int, int, int]) -> str:
     """Convenience function to create a directory name from spacing in the format
     '{spacing_z}-{spacing_y}-{spacing_x}'"""
     return "-".join([str(i) for i in spacing])
+
+
+def get_multiscales(group: zarr.Group) -> list[dict]:
+    """Get array scales as a list of dicts.
+
+    The function looks for "spacing" in the array attributes as a source of ground
+    truth. If not found, the array is ignored.
+
+    Parameters
+    ----------
+    group : zarr.Group
+        Zarr group containing the multiscale arrays.
+
+    Returns
+    -------
+    list[dict]
+        A list containing the multiscale information as a dictionary. Scales
+        are sorted for ascending pixel area/voxel volume.
+        Example return:
+            [
+                {"path": "0", "scale": [50, 50, 50]},
+                {"path": "1", "scale": [100, 100, 100]}
+            ]
+    """
+
+    def _get_spacing(arr: zarr.Array) -> tuple[int | float] | None:
+        """Access spacing and returns None if not found"""
+        return arr.attrs.get("spacing", None)
+
+    multiscales = [
+        {"path": key, "scale": _get_spacing(arr)}
+        for key, arr in group.arrays()
+        if _get_spacing(arr)
+    ]
+    return sorted(multiscales, key=lambda x: np.prod(x["scale"]))

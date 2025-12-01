@@ -12,6 +12,7 @@ from .misc import (
     create_ome_multiscales,
     spacing_from_dirname,
     dirname_from_spacing,
+    get_multiscales,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "create_ome_multiscales",
     "spacing_from_dirname",
     "dirname_from_spacing",
+    "get_multiscales",
 ]
