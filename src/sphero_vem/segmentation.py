@@ -17,15 +17,12 @@ import torch
 import numpy as np
 import pandas as pd
 import zarr
-from zarr.codecs import BloscCodec, BloscShuffle
-from sphero_vem.io import read_tensor, write_image
+from sphero_vem.io import read_tensor, write_image, write_zarr
 from sphero_vem.utils import (
     get_file_info,
     read_manifest,
     timestamp,
     vprint,
-    create_ome_multiscales,
-    spacing_from_dirname,
     dirname_from_spacing,
 )
 from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch
@@ -438,8 +435,7 @@ class SegmentationConfig:
     spacing_dir: str
     out_path: Path | None = None
     verbose: bool = True
-    out_dir: Path | None = None
-    zarr_chunks: tuple[int, int, int] | None = None
+    zarr_chunks: tuple[int] | None = None
     batch_size: int = 64
     flow3D_smooth: int = 2
     augment: bool = False
@@ -450,12 +446,16 @@ class SegmentationConfig:
 
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
-    spacing: tuple[int, int, int] = field(init=False)
+    spacing: list[int | float] = field(init=False)
+    src_zarr: zarr.Array = field(init=False)
 
     def __post_init__(self):
         self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
         self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
-        self.spacing = tuple(int(i) for i in self.spacing_dir.split("-"))
+        self.src_zarr = zarr.open_array(
+            self.root_path / f"images/{self.spacing_dir}", mode="r"
+        )
+        self.spacing = self.src_zarr.attrs.get("spacing")
 
         # If out_dir is not specified, save under the Zarr path of the images
         if not self.out_path:
@@ -463,14 +463,8 @@ class SegmentationConfig:
         else:
             self.out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Unless specified, set zarr chunks as (1, H, W)
         if not self.zarr_chunks:
-            self.zarr_chunks = self._get_chunks()
-
-    def _get_chunks(self) -> tuple[int, int, int]:
-        """Define chunks as (1, H, W)"""
-        zarr_root = zarr.open_group(self.root_path, mode="r")
-        return (1, *zarr_root["images"][self.spacing_dir].shape[1:])
+            self.zarr_chunks = self.src_zarr.chunks
 
 
 def segment_stack(config: SegmentationConfig) -> None:
@@ -492,20 +486,26 @@ def segment_stack(config: SegmentationConfig) -> None:
         }
     ]
 
-    data_root = zarr.open_group(config.root_path, mode="r")
-    images_zarr = data_root["images"][config.spacing_dir]
-    volume_stack: np.ndarray = images_zarr[:]
+    image: np.ndarray = config.src_zarr[:]
     cellpose_model = models.CellposeModel(gpu=True, pretrained_model=config.model_dir)
 
     time_start = datetime.now()
     vprint(f"Starting segmentation at {time_start}", config.verbose)
 
+    # Shape and channel settings to handle 2D and 3D images correctly
+    settings_ndim = {
+        2: {"z_axis": None, "channel_axis": None, "do_3D": False},
+        3: {
+            "z_axis": 0,
+            "channel_axis": None,
+            "do_3D": True,
+        },
+    }
+
     with torch.inference_mode():
         _, flows, _ = cellpose_model.eval(
-            volume_stack,
-            do_3D=True,
-            channel_axis=1,
-            z_axis=0,
+            image,
+            **settings_ndim[image.ndim],
             batch_size=config.batch_size,
             tile_overlap=config.tile_overlap,
             flow3D_smooth=config.flow3D_smooth,
@@ -536,43 +536,28 @@ def segment_stack(config: SegmentationConfig) -> None:
 
     # Saving flows
     vprint("Saving flows", config.verbose)
-
-    # Create zarr tree
     save_root = zarr.open_group(config.out_path, mode="a")
-    labels_group = save_root.require_group("labels")
-    seg_group = labels_group.require_group(config.seg_target)
-    flows_group = seg_group.require_group("flows")
-    cellprob_group = flows_group.require_group("cellprob")
-    dp_group = flows_group.require_group("dP")
 
-    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    cellprob_arr = cellprob_group.create_array(
-        config.spacing_dir,
-        shape=cellprob.shape,
-        chunks=config.zarr_chunks,
+    write_zarr(
+        save_root,
+        cellprob,
+        f"labels/{config.seg_target}/flows/cellprob/{config.spacing_dir}",
+        src_zarr=config.src_zarr,
+        processing=processing,
+        zarr_chunks=config.zarr_chunks,
         dtype="f2",
-        compressors=compressor,
-        overwrite=True,
-    )
-    dp_arr = dp_group.create_array(
-        config.spacing_dir,
-        shape=dP.shape,
-        chunks=(3, *config.zarr_chunks),
-        dtype="f2",
-        compressors=compressor,
-        overwrite=True,
     )
 
-    cellprob_arr[...] = cellprob
-    dp_arr[...] = dP
-
-    # Update metadata
-    for arr in [cellprob_arr, dp_arr]:
-        arr.attrs["spacing"] = config.spacing
-        arr.attrs["processing"] = images_zarr.attrs.get("processing") + processing
-        arr.attrs["inputs"] = images_zarr.path
-    create_ome_multiscales(cellprob_group)
-    create_ome_multiscales(dp_group, multichannel=True)
+    write_zarr(
+        save_root,
+        dP,
+        f"labels/{config.seg_target}/flows/dP/{config.spacing_dir}",
+        src_zarr=config.src_zarr,
+        processing=processing,
+        zarr_chunks=config.zarr_chunks,
+        dtype="f2",
+        multichannel=True,
+    )
 
 
 @dataclass
@@ -586,29 +571,29 @@ class SegmentationMaskParams:
     cellprob_threshold: float = -0.5
     flow_threshold: float = 0.4
     min_diam: float = 3
-    gaussin_edge_sigma: float = 2.0
+    gaussian_edge_sigma: float = 2.0
     merge_weight_threshold: float = 0.2
     merge_contact_threshold: float = 0.2
     device: str = "cuda"
-    zarr_chunks: tuple[int, int, int] | None = None
+    zarr_chunks: tuple[int] | None = None
 
     min_size: int = field(init=False)
+    spacing: list[int | float] = field(init=False)
 
     def __post_init__(self):
         # Celculate min_size in pixel from min_diam in micrometers
-        voxel_nm = np.prod(spacing_from_dirname(self.spacing_dir))
+        src_zarr = zarr.open_array(
+            self.root_path / f"images/{self.spacing_dir}", mode="r"
+        )
+        self.spacing = src_zarr.attrs.get("spacing")
+
+        voxel_nm = np.prod(self.spacing)
         voxel_um = voxel_nm * 1e-9
         min_vol_um = 4 / 3 * np.pi * (self.min_diam / 2) ** 3
         self.min_size = int(min_vol_um / voxel_um)
 
-        # Unless specified, set zarr chunks as (1, H, W)
         if not self.zarr_chunks:
-            self.zarr_chunks = self._get_chunks()
-
-    def _get_chunks(self) -> tuple[int, int, int]:
-        """Define chunks as (1, H, W)"""
-        zarr_root = zarr.open_group(self.root_path, mode="r")
-        return (1, *zarr_root["images"][self.spacing_dir].shape[1:])
+            self.zarr_chunks = src_zarr.chunks
 
 
 def calculate_masks(config: SegmentationMaskParams):
@@ -617,12 +602,15 @@ def calculate_masks(config: SegmentationMaskParams):
     device = torch.device(config.device)
 
     root = zarr.open_group(config.root_path, mode="a")
-    seg_group = root["labels"][config.seg_target]
-    cellprob_arr = seg_group["flows"]["cellprob"][config.spacing_dir]
-    dp_arr = seg_group["flows"]["dP"][config.spacing_dir]
+    cellprob_zarr = root.get(
+        f"labels/{config.seg_target}/flows/cellprob/{config.spacing_dir}"
+    )
+    dp_zarr = root.get(f"labels/{config.seg_target}/flows/dP/{config.spacing_dir}")
 
-    cellprob: np.ndarray = cellprob_arr[:]
-    dP: np.ndarray = dp_arr[:]
+    cellprob: np.ndarray = cellprob_zarr[:]
+    dP: np.ndarray = dp_zarr[:]
+
+    do_3d = True if cellprob.ndim == 3 else False
 
     masks = dynamics.compute_masks(
         dP=dP,
@@ -630,13 +618,13 @@ def calculate_masks(config: SegmentationMaskParams):
         niter=config.niter,
         cellprob_threshold=config.cellprob_threshold,
         flow_threshold=config.flow_threshold,
-        do_3D=True,
+        do_3D=do_3d,
         min_size=config.min_size,
         device=device,
     )
 
     # Post-process labels
-    image_arr = root["images"][config.spacing_dir]
+    image_arr = root.get(f"images/{config.spacing_dir}")
     image: np.ndarray = image_arr[:]
     masks, _ = merge_labels(
         masks,
@@ -644,36 +632,31 @@ def calculate_masks(config: SegmentationMaskParams):
         image=image,
         rel_contact_thresh=config.merge_contact_threshold,
         weight_thresh=config.merge_weight_threshold,
-        sigma=config.gaussin_edge_sigma,
+        sigma=config.gaussian_edge_sigma,
     )
 
-    masks_group = seg_group.require_group("masks")
-    masks_dtype = np.uint8 if masks.max() <= 255 else np.uint16
-
-    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    masks_arr = masks_group.create_array(
-        config.spacing_dir,
-        shape=cellprob.shape,
-        chunks=config.zarr_chunks,
-        dtype=masks_dtype,
-        compressors=compressor,
-        overwrite=True,
-    )
-    masks_arr[...] = masks
-
-    # Update metadata
     processing_dict = asdict(config)
-    processing_dict.pop("root_path")
-    processing_dict.pop("device")
-    processing_dict.pop("zarr_chunks")
-    processing = cellprob_arr.attrs.get("processing") + [
-        {"step": "segmentation mask generation", **processing_dict}
+    excluded_keys = ["root_path", "device", "zarr_chunks"]
+    processing = cellprob_zarr.attrs.get("processing") + [
+        {
+            "step": "segmentation mask generation",
+            **{
+                key: val
+                for key, val in processing_dict.items()
+                if key not in excluded_keys
+            },
+        }
     ]
 
-    masks_arr.attrs["spacing"] = image_arr.attrs["spacing"]
-    masks_arr.attrs["processing"] = processing
-    masks_arr.attrs["inputs"] = [image_arr.path, cellprob_arr.path, dp_arr.path]
-    create_ome_multiscales(masks_group)
+    write_zarr(
+        root,
+        masks,
+        f"labels/{config.seg_target}/masks/{config.spacing_dir}",
+        src_zarr=cellprob_zarr,
+        dtype=np.uint8 if masks.max() <= 255 else np.uint16,
+        inputs=[image_arr.path, cellprob_zarr.path, dp_zarr.path],
+        processing=processing,
+    )
 
 
 @gpu_dispatch(return_to_host=True)
@@ -749,11 +732,11 @@ def upsample_region_fill(
 def upsample_masks(
     root_path: Path,
     seg_target: str,
-    target_spacing: tuple[int, int, int],
+    target_spacing: tuple[int, float],
     src_spacing: tuple[int, int, int] = (100, 100, 100),
     erosion_iterations: int = 2,
     cellprob_threshold: float = 0.0,
-    store_chunks: tuple[int, int, int] = (1, 1024, 1024),
+    store_chunks: tuple[int] | None = None,
 ) -> None:
     """Upsample cellpose labels"""
 
@@ -774,20 +757,6 @@ def upsample_masks(
         cellprob_threshold=cellprob_threshold,
     )
 
-    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-
-    labels_group = root.get(f"labels/{seg_target}/masks/")
-    labels_hr_zarr = labels_group.create_array(
-        dirname_from_spacing(target_spacing),
-        shape=labels_hr.shape,
-        chunks=store_chunks,
-        dtype=labels_hr.dtype,
-        compressors=compressor,
-        overwrite=True,
-    )
-    labels_hr_zarr[...] = labels_hr
-
-    # Update metadata
     processing = labels_lr_zarr.attrs.get("processing") + [
         {
             "step": "upsample masks",
@@ -796,7 +765,13 @@ def upsample_masks(
         }
     ]
 
-    labels_hr_zarr.attrs["spacing"] = target_spacing
-    labels_hr_zarr.attrs["processing"] = processing
-    labels_hr_zarr.attrs["inputs"] = [labels_lr_zarr.path, cellprob_hr_zarr.path]
-    create_ome_multiscales(labels_group)
+    write_zarr(
+        root,
+        labels_hr,
+        f"labels/{seg_target}/masks/{dirname_from_spacing(target_spacing)}",
+        src_zarr=labels_lr_zarr,
+        spacing=target_spacing,
+        processing=processing,
+        zarr_chunks=store_chunks if store_chunks else labels_lr_zarr.chunks,
+        inputs=[labels_lr_zarr.path, cellprob_hr_zarr.path],
+    )
