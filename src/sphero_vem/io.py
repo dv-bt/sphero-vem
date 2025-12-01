@@ -15,7 +15,6 @@ from sphero_vem.utils import (
     read_manifest,
     create_ome_multiscales,
     dirname_from_spacing,
-    spacing_from_dirname,
 )
 
 
@@ -186,21 +185,83 @@ def write_zarr(
     array: np.ndarray | da.Array,
     dst_path: str,
     src_zarr: zarr.Array | None = None,
+    spacing: tuple[int | float] | None = None,
     dtype: Any | None = None,
     shape: tuple[int] | None = None,
-    spacing: tuple[int, int, int] | None = None,
     processing: list[dict] | dict | None = None,
     inputs: list[str] | None = None,
-    zarr_chunks: tuple[int, int, int] = (1, 1024, 1024),
-    multiscales: list[dict] | None = None,
+    zarr_chunks: tuple[int] | None = None,
+    multichannel: bool = False,
 ) -> None:
-    """Write numpy or dask array to zarr."""
+    """Write numpy or dask array to zarr.
+
+    Parameters
+    ----------
+    root: zarr.Group
+        Root zarr group used to save the image.
+    array: np.ndarray | da.Array
+        Numpy or Dask array containing the to save. Axis order should be (CZ)YX.
+    dst_path : str
+        Path under root where to save the file.
+    src_zarr: zarr.Array | None
+        Source zarr array. Used to determine previous processing, as well as chunk size
+        and spacing unless they are specified. Default is None.
+    spacing: tuple[int | float] | None
+        Spacing of the array. If None, uses the spacing of src_zarr if provided.
+        Spacing is saved under the "spacing" key in the destination array attributes.
+        NOTE: this might lead to incorrect spacing if resampling was involved!
+        Default is None.
+    dtype: Any | None
+        Data type of the saved zarr array. This casts the array to specified dtype
+        while saving it. If None, uses the array dtype. Default is None.
+    shape: tuple[int] | None
+        Zarr array shape. If None, uses the input array shape. Default is None.
+    processing: list[dict] | dict | None
+        Sequential processing steps done on the array. Each step is a dictionary
+        whose first key should be "step":"step name". The function tries to read
+        the previous processing of the source array by reading
+        src_zarr.attrs["processing] and appends processing to this list. If None,
+        processing will be an empty list. Default is None.
+    inputs: list[str] | None
+        Paths to the input array(s). If None, uses the path to src_array if supplied.
+        Default is None.
+    zarr_chunks: tuple[int] | None
+        Chunks of the saved zarr array. It should have the same length as the array
+        dimensions. If None, uses src_array chunks. Default is None.
+    multichannel: bool = False
+        Whether the image is multichannel or not. Image channel should always be the
+        first axis of array. Default is False.
+
+    Raises
+    ------
+    ValueError
+        If spacing is None and src_zarr is None: spacing should be specified, or a
+        valid src_zarr should be passed.
+    ValueError
+        If src_zarr doesn't have a spacing attribute.
+    ValueError
+        If zarr_chunks is None and src_zarr is None: zarr_chunks should be specified,
+        or a valid src_zarr should be passed.
+    """
 
     group_path = str(Path(dst_path).parent)
 
-    # Assume that spacing is correctly specified in destination name
     if not spacing:
-        spacing = spacing_from_dirname(Path(dst_path).name)
+        if src_zarr:
+            spacing = src_zarr.attrs.get("spacing")
+            if not spacing:
+                raise ValueError(
+                    "Source array has no spacing attribute. "
+                    "Destination spacing must be specified."
+                )
+        else:
+            raise ValueError("Spacing must be specified if src_zarr is None.")
+
+    if not zarr_chunks:
+        if src_zarr:
+            zarr_chunks = src_zarr.chunks
+        else:
+            raise ValueError("Zarr chunks must be specified if src_zarr is None.")
 
     compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
     dst_zarr = root.require_array(
@@ -239,4 +300,17 @@ def write_zarr(
     dst_zarr.attrs["spacing"] = spacing
     dst_zarr.attrs["processing"] = src_processing + processing
     dst_zarr.attrs["inputs"] = inputs
-    create_ome_multiscales(root.get(group_path), scales=multiscales)
+
+    # Get parameters for multiscales
+    if array.ndim < 3:
+        spatial_dims = 2
+    elif array.ndim == 3:
+        spatial_dims = 2 if multichannel else 3
+    else:
+        spatial_dims = 3
+
+    create_ome_multiscales(
+        root.get(group_path),
+        spatial_dims=spatial_dims,
+        multichannel=multichannel,
+    )
