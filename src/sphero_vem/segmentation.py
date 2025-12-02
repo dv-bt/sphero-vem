@@ -467,7 +467,7 @@ class SegmentationConfig:
             self.zarr_chunks = self.src_zarr.chunks
 
 
-def segment_stack(config: SegmentationConfig) -> None:
+def calculate_flows(config: SegmentationConfig) -> None:
     """Segment volume stack using config as input. This function calculates flows and
     cell probability, masks have to be calculated in a following step."""
 
@@ -532,7 +532,8 @@ def segment_stack(config: SegmentationConfig) -> None:
         dP = decompose_flow(
             dP, config.decompose_flows_pad_fraction, torch.device("cuda")
         )
-    cellprob = median_filter(cellprob, config.median_filter_cellprob)
+    if config.median_filter_cellprob:
+        cellprob = median_filter(cellprob, config.median_filter_cellprob)
 
     # Saving flows
     vprint("Saving flows", config.verbose)
@@ -554,7 +555,7 @@ def segment_stack(config: SegmentationConfig) -> None:
         f"labels/{config.seg_target}/flows/dP/{config.spacing_dir}",
         src_zarr=config.src_zarr,
         processing=processing,
-        zarr_chunks=config.zarr_chunks,
+        zarr_chunks=(3, *config.zarr_chunks),
         dtype="f2",
         multichannel=True,
     )
@@ -571,6 +572,7 @@ class SegmentationMaskParams:
     cellprob_threshold: float = -0.5
     flow_threshold: float = 0.4
     min_diam: float = 3
+    merge_masks: bool = True
     gaussian_edge_sigma: float = 2.0
     merge_weight_threshold: float = 0.2
     merge_contact_threshold: float = 0.2
@@ -587,10 +589,15 @@ class SegmentationMaskParams:
         )
         self.spacing = src_zarr.attrs.get("spacing")
 
-        voxel_nm = np.prod(self.spacing)
-        voxel_um = voxel_nm * 1e-9
-        min_vol_um = 4 / 3 * np.pi * (self.min_diam / 2) ** 3
-        self.min_size = int(min_vol_um / voxel_um)
+        # Determine whether min_size should be area or volume
+        if len(self.spacing) == 2:
+            pixel_um = np.prod(self.spacing) * 1e-6
+            min_area_um = np.pi * (self.min_diam / 2) ** 2
+            self.min_size = int(min_area_um / pixel_um)
+        elif len(self.spacing) == 3:
+            voxel_um = np.prod(self.spacing) * 1e-9
+            min_vol_um = 4 / 3 * np.pi * (self.min_diam / 2) ** 3
+            self.min_size = int(min_vol_um / voxel_um)
 
         if not self.zarr_chunks:
             self.zarr_chunks = src_zarr.chunks
@@ -625,15 +632,16 @@ def calculate_masks(config: SegmentationMaskParams):
 
     # Post-process labels
     image_arr = root.get(f"images/{config.spacing_dir}")
-    image: np.ndarray = image_arr[:]
-    masks, _ = merge_labels(
-        masks,
-        cellprob=cellprob,
-        image=image,
-        rel_contact_thresh=config.merge_contact_threshold,
-        weight_thresh=config.merge_weight_threshold,
-        sigma=config.gaussian_edge_sigma,
-    )
+    if config.merge_masks:
+        image: np.ndarray = image_arr[:]
+        masks, _ = merge_labels(
+            masks,
+            cellprob=cellprob,
+            image=image,
+            rel_contact_thresh=config.merge_contact_threshold,
+            weight_thresh=config.merge_weight_threshold,
+            sigma=config.gaussian_edge_sigma,
+        )
 
     processing_dict = asdict(config)
     excluded_keys = ["root_path", "device", "zarr_chunks"]

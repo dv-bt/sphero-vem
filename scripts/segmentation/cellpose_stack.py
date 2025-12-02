@@ -5,7 +5,7 @@ Segment a volume stack using cellpose
 import shutil
 from pathlib import Path
 import zarr
-from sphero_vem.segmentation import SegmentationConfig, segment_stack
+from sphero_vem.segmentation import SegmentationConfig, calculate_flows
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
             spacing_dir=spacing_dir,
             decompose_flows=params["decompose_flows"],
         )
-        segment_stack(config)
+        calculate_flows(config)
 
 
 if __name__ == "__main__":
