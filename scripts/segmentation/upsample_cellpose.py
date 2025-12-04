@@ -4,7 +4,7 @@ Upsample cellpose masks using distance transform and cell probability
 
 from pathlib import Path
 from tqdm import tqdm
-from sphero_vem.segmentation import upsample_masks
+from sphero_vem.segmentation.cellpose import upsample_masks
 
 
 def main():

@@ -12,8 +12,6 @@ from tqdm import tqdm
 import numpy as np
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
-import dask.array as da
-from dask_image.ndfilters import gaussian_filter
 from scipy.optimize import minimize_scalar
 from scipy.ndimage import find_objects
 import skimage as ski_cpu
@@ -29,15 +27,14 @@ from sphero_vem.utils.accelerator import (
     ndi,
     to_host,
     to_device,
-    da_to_device,
-    da_to_host,
 )
 from sphero_vem.io import write_zarr
 from sphero_vem.postprocessing import binary_closing, filter_and_relabel
+from sphero_vem.segmentation.np.utils import bincount_ubyte
 
 
 @dataclass
-class NanoparticleConfig:
+class NanoparticleSegConfig:
     """Configuration class for NP segmentation"""
 
     stack_root: Path
@@ -89,7 +86,7 @@ class NanoparticleSegmentation:
 
     def __init__(
         self,
-        config: NanoparticleConfig,
+        config: NanoparticleSegConfig,
     ) -> None:
         """Initialize the class from patches of NPs and background.
 
@@ -103,9 +100,9 @@ class NanoparticleSegmentation:
         """
         self.config = config
         self.stack_root = zarr.open_group(self.config.stack_root, mode="a")
-        self.volume_stack: zarr.Array = self.stack_root["images"][
-            self.config.spacing_dir
-        ]
+        self.volume_stack: zarr.Array = self.stack_root.get(
+            f"images/{self.config.spacing_dir}"
+        )
 
     @classmethod
     def load(cls, model_dir: str | Path) -> Self:
@@ -113,7 +110,7 @@ class NanoparticleSegmentation:
         a training_manifest.json and model_params.npz of the correct format"""
         if isinstance(model_dir, str):
             model_dir = Path(model_dir)
-        config = NanoparticleConfig.from_json(model_dir / "training_manifest.json")
+        config = NanoparticleSegConfig.from_json(model_dir / "training_manifest.json")
         segmentation = cls(config)
 
         params = np.load(model_dir / "model_params.npz")
@@ -339,9 +336,7 @@ class NanoparticleSegmentation:
         Posterior is saved as float16"""
 
         # Save posteriors under root/labels/nps/(spacing)
-        labels_group = self.stack_root.require_group("labels")
-        seg_group = labels_group.require_group("nps")
-        posterior_group = seg_group.require_group("posterior")
+        posterior_group = self.stack_root.require_group("labels/nps/posterior")
 
         compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
         posterior_arr = posterior_group.create_array(
@@ -375,65 +370,6 @@ class NanoparticleSegmentation:
         )
         posterior_arr.attrs["inputs"] = self.volume_stack.path
         create_ome_multiscales(posterior_group)
-
-
-@gpu_dispatch(return_to_host=True)
-def bincount_ubyte(image: ArrayLike) -> np.ndarray:
-    """Calculates image histogram with GPU acceleration"""
-    return xp.bincount(image.ravel(), minlength=256).astype(xp.int64)
-
-
-def downsample_posterior(
-    root_path: Path,
-    sigma: tuple[float, float, float],
-    dst_spacing: tuple[int, int, int],
-    src_spacing: tuple[int, int, int] = (50, 10, 10),
-) -> None:
-    """Downsample posterior using average pooling after Gaussian antialiasing"""
-    root = zarr.open_group(root_path, mode="a")
-    spacing_dir = dirname_from_spacing(src_spacing)
-    src_zarr: zarr.Array = root.get(f"labels/nps/posterior/{spacing_dir}")
-
-    # Calculate downsampling parameters
-    ds_ratio = np.asarray(dst_spacing) / np.asarray(src_spacing)
-    final_shape = (src_zarr.shape // ds_ratio).astype(int).tolist()
-
-    ## Dask pipeline
-    tmp_chunks = (64, 1000, 1000)
-    prob = da.from_zarr(src_zarr).rechunk(tmp_chunks)
-    prob = da_to_device(prob)
-    prob = prob.astype(xp.float32)
-
-    # Convert to logit and smooth
-    eps = 1e-5
-    prob = da.clip(prob, eps, 1 - eps)
-    logit = da.log(prob / (1 - prob))
-    logit_smooth = gaussian_filter(logit, sigma=sigma)
-    prob_smooth = 1 / (1 + da.exp(-logit_smooth))
-
-    # Average pooling
-    axes_dict = {i: int(ds_ratio[i]) for i in range(3)}
-    downsampled = da.coarsen(
-        xp.mean,
-        prob_smooth,
-        axes_dict,
-        trim_excess=True,
-    )
-    downsampled = da_to_host(downsampled)
-
-    write_zarr(
-        root,
-        downsampled,
-        dst_path=f"labels/nps/posterior/{dirname_from_spacing(dst_spacing)}",
-        src_zarr=src_zarr,
-        shape=final_shape,
-        dtype="f2",
-        processing={
-            "step": "downscaling",
-            "sigma": sigma,
-            "target spacing": dst_spacing,
-        },
-    )
 
 
 def label_nanoparticles(

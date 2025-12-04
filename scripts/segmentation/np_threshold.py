@@ -3,7 +3,7 @@ Theshold np posterior
 """
 
 from pathlib import Path
-from sphero_vem.segmentation_np import label_nanoparticles
+from sphero_vem.segmentation.np import label_nanoparticles
 
 
 def main():

@@ -4,13 +4,13 @@ Nanoparticle segmentation
 
 from pathlib import Path
 from sphero_vem.utils import timestamp
-from sphero_vem.segmentation_np import NanoparticleConfig, NanoparticleSegmentation
+from sphero_vem.segmentation.np import NanoparticleSegConfig, NanoparticleSegmentation
 
 
 def main() -> None:
     """Main script execution"""
     stack_root = Path("data/processed/segmented/Au_01-vol_01.zarr")
-    config = NanoparticleConfig(
+    config = NanoparticleSegConfig(
         stack_root=stack_root, spacing_dir="50-10-10", verbose=True
     )
 

@@ -6,7 +6,6 @@ import os
 import yaml
 import json
 from datetime import datetime
-import xxhash
 from pathlib import Path
 import torch
 import zarr
@@ -17,13 +16,9 @@ def get_file_info(filepath: Path, data_root: Path) -> dict:
     """Get file info and generate hashes. Used for manifest generation"""
     stat = os.stat(filepath)
 
-    # Calculate hash for file integrity (optional but recommended)
-    hash_value = xxhash.xxh64(open(filepath, "rb").read()).hexdigest()
-
     return {
         "path": str(filepath.relative_to(data_root)),
         "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        "xxh64_hash": hash_value,
     }
 
 

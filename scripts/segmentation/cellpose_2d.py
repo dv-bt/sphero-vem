@@ -5,7 +5,7 @@ Segment 2D datasets with pretrained cellpose models
 from pathlib import Path
 from tqdm import tqdm
 import zarr
-from sphero_vem.segmentation import (
+from sphero_vem.segmentation.cellpose import (
     SegmentationConfig,
     SegmentationMaskParams,
     calculate_flows,
