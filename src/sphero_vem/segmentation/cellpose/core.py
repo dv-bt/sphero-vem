@@ -40,8 +40,17 @@ class CellposeFlowConfig:
     src_zarr: zarr.Array = field(init=False)
 
     def __post_init__(self):
-        self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
-        self.model_dir = Path(f"data/models/cellpose/{self.model}/models/{self.model}")
+        # Allow loading pretrained model
+        if self.model == "cpsam":
+            # Set model_dir as empty path for compatibility with class init
+            self.model_dir = Path("")
+            self.seg_target = "cells"
+        else:
+            self.model_dir = Path(
+                f"data/models/cellpose/{self.model}/models/{self.model}"
+            )
+            self.seg_target = re.search(r"cellposeSAM-(\w+)-", self.model).group(1)
+
         self.src_zarr = zarr.open_array(
             self.root_path / f"images/{self.spacing_dir}", mode="r"
         )
@@ -77,7 +86,8 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     ]
 
     image: np.ndarray = config.src_zarr[:]
-    cellpose_model = models.CellposeModel(gpu=True, pretrained_model=config.model_dir)
+    pretrained_model = "cpsam" if config.model == "cpsam" else config.model_dir
+    cellpose_model = models.CellposeModel(gpu=True, pretrained_model=pretrained_model)
 
     time_start = datetime.now()
     vprint(f"Starting segmentation at {time_start}", config.verbose)
@@ -221,8 +231,10 @@ def calculate_masks(config: CellposeMaskConfig):
     )
 
     # Post-process labels
-    image_arr = root.get(f"images/{config.spacing_dir}")
+    inputs = [cellprob_zarr.path, dp_zarr.path]
     if config.merge_masks:
+        image_arr = root.get(f"images/{config.spacing_dir}")
+        inputs.append(image_arr.path)
         image: np.ndarray = image_arr[:]
         masks, _ = merge_labels(
             masks,
@@ -252,6 +264,6 @@ def calculate_masks(config: CellposeMaskConfig):
         f"labels/{config.seg_target}/masks/{config.spacing_dir}",
         src_zarr=cellprob_zarr,
         dtype=np.uint8 if masks.max() <= 255 else np.uint16,
-        inputs=[image_arr.path, cellprob_zarr.path, dp_zarr.path],
+        inputs=inputs,
         processing=processing,
     )
