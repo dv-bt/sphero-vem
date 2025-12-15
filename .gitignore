@@ -158,8 +158,6 @@ data*/
 scripts/benchmarks/assets
 notebooks/temp
 
-# Temporarily remove notebooks
-notebooks/
-
-# Scratch folder
-scripts/scratch/
+# Untracked folders
+notebooks/untracked/
+scripts/untracked/
