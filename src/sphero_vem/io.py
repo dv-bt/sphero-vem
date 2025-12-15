@@ -174,8 +174,10 @@ def stack_to_zarr(
 
     # Update zarr metadata
     manifest = read_manifest(stack_dir)
+    processing = manifest.get("processing")
+
     zarr_arr.attrs["spacing"] = spacing
-    zarr_arr.attrs["processing"] = manifest["processing"]
+    zarr_arr.attrs["processing"] = processing if processing else []
     zarr_arr.attrs["inputs"] = [str(path) for path in image_paths]
     create_ome_multiscales(image_group)
 
