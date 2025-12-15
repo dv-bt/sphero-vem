@@ -308,7 +308,7 @@ class NanoparticleSegmentation:
         return float(res.x)
 
     @gpu_dispatch(return_to_host=True)
-    def _posterior_image(self, image: ArrayLike) -> np.ndarray:
+    def _posterior_image(self, image: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
         """Predict the NP posterior distribution of the given 2D image.
 
         Parameters
@@ -320,6 +320,8 @@ class NanoparticleSegmentation:
         -------
         np.ndarray
             The raw map of the posterior NP distribution, in range [0, 1].
+        np.ndarray
+            The NP posterior distribution, in range [0, 1].
         """
 
         hist_image = bincount_ubyte(image)
@@ -329,7 +331,7 @@ class NanoparticleSegmentation:
         posterior_bins = to_device((pi * self.p_np) / (mix + self.config.eps))
 
         posterior_map = posterior_bins[image]
-        return posterior_map
+        return posterior_map, posterior_bins
 
     def predict(self, model_name: str | None = None) -> None:
         """Predict NP posterior map and save it under root.zarr/labels/nps/(spacing).
@@ -352,7 +354,7 @@ class NanoparticleSegmentation:
             disable=not self.config.verbose,
         ):
             image = self.volume_stack[idx]
-            posterior = self._posterior_image(image)
+            posterior, _ = self._posterior_image(image)
             posterior_arr[idx] = posterior
 
         processing = [
