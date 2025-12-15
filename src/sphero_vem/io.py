@@ -181,7 +181,7 @@ def stack_to_zarr(
 
 
 def write_zarr(
-    root: zarr.group | Path | str,
+    root: zarr.Group | Path | str,
     array: np.ndarray | da.Array,
     dst_path: str,
     src_zarr: zarr.Array | None = None,
