@@ -181,7 +181,7 @@ def stack_to_zarr(
 
 
 def write_zarr(
-    root: zarr.group,
+    root: zarr.group | Path | str,
     array: np.ndarray | da.Array,
     dst_path: str,
     src_zarr: zarr.Array | None = None,
@@ -197,8 +197,8 @@ def write_zarr(
 
     Parameters
     ----------
-    root: zarr.Group
-        Root zarr group used to save the image.
+    root: zarr.Group | pathlib.Path | str
+        Root zarr group used to save the image, or path to the root group.
     array: np.ndarray | da.Array
         Numpy or Dask array containing the to save. Axis order should be (CZ)YX.
     dst_path : str
@@ -243,6 +243,9 @@ def write_zarr(
         If zarr_chunks is None and src_zarr is None: zarr_chunks should be specified,
         or a valid src_zarr should be passed.
     """
+
+    if not isinstance(root, zarr.Group):
+        root = zarr.open_group(root, mode="a")
 
     group_path = str(Path(dst_path).parent)
 
