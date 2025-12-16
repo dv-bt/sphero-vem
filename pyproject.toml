@@ -6,7 +6,7 @@ authors = [
     {name = "dv-bt",email = "d.bottone@pm.me"}
 ]
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "torch (>=2.0.0,<2.7.0)",
     "torchvision (>=0.15.0,<0.22.0)",
@@ -24,6 +24,7 @@ dependencies = [
     "jsonargparse (>=4.40.2,<5.0.0)",
     "tyro (>=0.9.31,<0.10.0)",
     "dask-image (>=2025.11.0,<2026.0.0)",
+    "porespy (>=3.0.3,<4.0.0)",
 ]
 
 [tool.poetry]
