@@ -71,6 +71,7 @@ class DenosingConfig(BaseConfig):
                 "depth": self.unet_depth,
                 "num_channels_init": self.unet_num_channels_init,
             },
+            checkpoint_params={"save_top_k": 1},
             train_dataloader_params={"num_workers": self.num_workers},
             val_dataloader_params={"num_workers": self.num_workers},
         )

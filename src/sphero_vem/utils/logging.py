@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import wandb
-from lightning.pytorch.callbacks import Callback
+from pytorch_lightning.callbacks import Callback
 
 
 class HyperparamsCallback(Callback):
