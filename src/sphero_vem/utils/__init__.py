@@ -15,6 +15,8 @@ from .misc import (
     get_multiscales,
 )
 
+from .config import to_serializable, BaseConfig
+
 __all__ = [
     "get_file_info",
     "read_section_errors",
@@ -30,4 +32,6 @@ __all__ = [
     "spacing_from_dirname",
     "dirname_from_spacing",
     "get_multiscales",
+    "to_serializable",
+    "BaseConfig",
 ]
