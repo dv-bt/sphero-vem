@@ -13,9 +13,10 @@ from .misc import (
     spacing_from_dirname,
     dirname_from_spacing,
     get_multiscales,
+    temporary_zarr,
 )
 
-from .config import to_serializable, BaseConfig
+from .config import to_serializable, BaseConfig, ProcessingStep
 
 __all__ = [
     "get_file_info",
@@ -34,4 +35,6 @@ __all__ = [
     "get_multiscales",
     "to_serializable",
     "BaseConfig",
+    "ProcessingStep",
+    "temporary_zarr",
 ]

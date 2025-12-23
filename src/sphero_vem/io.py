@@ -15,6 +15,7 @@ from sphero_vem.utils import (
     read_manifest,
     create_ome_multiscales,
     dirname_from_spacing,
+    ProcessingStep,
 )
 
 
@@ -190,7 +191,7 @@ def write_zarr(
     spacing: tuple[int | float] | None = None,
     dtype: Any | None = None,
     shape: tuple[int] | None = None,
-    processing: list[dict] | dict | None = None,
+    processing: ProcessingStep | list[ProcessingStep] | list[dict] | dict | None = None,
     inputs: list[str] | None = None,
     zarr_chunks: tuple[int] | None = None,
     multichannel: bool = False,
@@ -218,12 +219,12 @@ def write_zarr(
         while saving it. If None, uses the array dtype. Default is None.
     shape: tuple[int] | None
         Zarr array shape. If None, uses the input array shape. Default is None.
-    processing: list[dict] | dict | None
-        Sequential processing steps done on the array. Each step is a dictionary
-        whose first key should be "step":"step name". The function tries to read
-        the previous processing of the source array by reading
-        src_zarr.attrs["processing] and appends processing to this list. If None,
-        processing will be an empty list. Default is None.
+    processing: ProcessingStep| list[ProcessingStep] | list[dict] | dict | None
+        Sequential processing steps done on the array, as a single or a list of
+        ProcessingStep instances. Input by dictionaries is kept for compatibility.
+        The function tries to read the previous processing of the source array by
+        reading src_zarr.attrs["processing] and appends processing to this list.
+        If None, processing will be an empty list. Default is None.
     inputs: list[str] | None
         Paths to the input array(s). If None, uses the path to src_array if supplied.
         Default is None.
@@ -292,10 +293,15 @@ def write_zarr(
     else:
         src_processing = []
 
+    # Ensure that processing is a list with appropriate formatting
     if not processing:
         processing = []
-    elif isinstance(processing, dict):
+    elif not isinstance(processing, list):
         processing = [processing]
+    processing = [
+        step.to_dict() if isinstance(step, ProcessingStep) else step
+        for step in processing
+    ]
 
     if not inputs and src_zarr:
         inputs = [src_zarr.path]

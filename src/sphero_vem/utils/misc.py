@@ -2,11 +2,14 @@
 Utility functions
 """
 
+import tempfile
+import shutil
+from pathlib import Path
+from contextlib import contextmanager
 import os
 import yaml
 import json
 from datetime import datetime
-from pathlib import Path
 import torch
 import zarr
 import numpy as np
@@ -273,3 +276,54 @@ def get_multiscales(group: zarr.Group) -> list[dict]:
         if _get_spacing(arr)
     ]
     return sorted(multiscales, key=lambda x: np.prod(x["scale"]))
+
+
+@contextmanager
+def temporary_zarr(
+    shape: tuple[int, ...],
+    chunks: tuple[int, ...],
+    dtype=np.float32,
+    prefix: str = "intermediate_",
+    dir: Path | str | None = None,
+):
+    """Context manager for temporary zarr array.
+
+    Parameters
+    ----------
+    shape : tuple[int, ...]
+        Shape of the array.
+    chunks : tuple[int, ...]
+        Chunk size for the array.
+    dtype : np.dtype
+        Data type of the array. Default is np.float32.
+    prefix : str
+        Prefix for the temporary directory name. Default is "intermediate_".
+    dir : Path | str | None
+        Parent directory for the temporary zarr. If None, uses system temp.
+
+    Yields
+    ------
+    zarr.Array
+        Temporary zarr array, deleted on context exit.
+    """
+
+    # Ensure parent directory exists
+    if dir is not None:
+        Path(dir).mkdir(parents=True, exist_ok=True)
+
+    tmp_dir = tempfile.mkdtemp(prefix=prefix, dir=dir)
+    tmp_path = Path(tmp_dir) / "data.zarr"
+
+    try:
+        # No compression for speed
+        tmp_zarr = zarr.open_array(
+            tmp_path,
+            mode="w",
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+        )
+        yield tmp_zarr
+    finally:
+        # Clean up immediately on exit
+        shutil.rmtree(tmp_dir, ignore_errors=True)

@@ -3,8 +3,9 @@ Functions and utilities for config classes
 """
 
 from pathlib import Path
+from datetime import datetime
 import json
-from dataclasses import asdict
+from dataclasses import dataclass, asdict
 from typing import ClassVar, Self, Any
 from sphero_vem.utils.misc import CustomJSONEncoder
 import dacite
@@ -56,3 +57,71 @@ class BaseConfig:
         for key in excluded:
             config_dict.pop(key, None)
         return to_serializable(config_dict)
+
+
+@dataclass
+class ProcessingStep:
+    """Represents a single processing step in the pipeline.
+
+    Can be created from a config or manually for manual steps.
+    """
+
+    step_name: str
+    timestamp: str
+    parameters: dict
+    version: str | None = None
+
+    @classmethod
+    def from_config(
+        cls, step_name: str, config: "BaseConfig", version: str | None = None
+    ) -> Self:
+        """Create a processing step from a config object.
+
+        Parameters
+        ----------
+        step_name: str
+            Name of the processing step
+        config: BaseConfig
+            Configuration dataclass instance, it should be a subclass of BaseConfig
+            that inherits its BaseConfig.processing_metadata() method.
+        version: str | None
+            Optional software version string. Default is None.
+        """
+        return cls(
+            step_name=step_name,
+            timestamp=datetime.now().isoformat(),
+            parameters=config.processing_metadata(),
+            version=version,
+        )
+
+    @classmethod
+    def manual(
+        cls, step_name: str, parameters: dict, version: str | None = None
+    ) -> Self:
+        """Create a manual processing step (no config).
+
+        Parameters
+        ----------
+        step_name: str
+            Name of the processing step
+        parameters: dict
+            Dictionary of parameters for this step. Take care that non-serializable
+            objects are not passed as a parameter value.
+        version: str | None
+            Optional software version string. Default is None.
+        """
+        return cls(
+            step_name=step_name,
+            timestamp=datetime.now().isoformat(),
+            parameters=parameters,
+            version=version,
+        )
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Self:
+        """Load a processing step from a dictionary (e.g., from zarr attrs)."""
+        return cls(**data)
+
+    def to_dict(self) -> dict:
+        """Convert to a serializable dictionary for storage (e.g., in zarr attrs)."""
+        return to_serializable(asdict(self))

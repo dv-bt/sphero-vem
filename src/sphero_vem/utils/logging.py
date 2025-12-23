@@ -1,5 +1,7 @@
 """Various functions for logging to WandB"""
 
+import logging
+from contextlib import contextmanager
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -50,3 +52,36 @@ def setup_wanb_env(project_name: str, experiment_tags: list[str] | str | None = 
             experiment_tags = ",".join(experiment_tags)
         os.environ["WANDB_TAGS"] = experiment_tags
     wandb.login()
+
+
+@contextmanager
+def suppress_logging(loggers: list[str] = None, level: int = logging.ERROR):
+    """
+    Context manager to temporarily suppress logs below the specified level.
+
+    Restores original levels automatically upon exit.
+
+    Parameters
+    ----------
+    loggers : list[str] | None
+        List of loggers to affect. If None, suppresses pytorch lightning logs.
+        Default is None.
+    level : int
+        Level below which logs are suppressed. Default is loggig.ERROR.
+    """
+    if loggers is None:
+        loggers = ["pytorch_lightning", "lightning.pytorch"]
+
+    original_levels = {}
+
+    try:
+        for name in loggers:
+            logger = logging.getLogger(name)
+            original_levels[name] = logger.level
+            logger.setLevel(level)
+
+        yield
+
+    finally:
+        for name, old_level in original_levels.items():
+            logging.getLogger(name).setLevel(old_level)
