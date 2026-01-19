@@ -112,86 +112,104 @@ def merge_labels(
 def _get_curl_free_component(
     input: torch.Tensor,
     spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
-    padding: tuple[int, int, int] = (0, 0, 0),
+    z_padding: int = 0,
 ) -> torch.Tensor:
     """
-    Computes the curl-free (irrotational) component of a 3D vector field unsing a
-    FFT-based approach.
+    Compute the curl-free (irrotational) component of a 3D vector field.
+
+    Uses FFT-based Helmholtz-Hodge decomposition with finite-difference
+    wavenumbers, following Bhatia et al. (2013) and Hinkle et al. (2009).
 
     Parameters
     ----------
-    input_vec : torch.Tensor
-        The input 3D vector field (3, Z, Y, X)
+    input : torch.Tensor
+        Input 3D vector field with shape (3, Z, Y, X).
     spacing : tuple[float, float, float], optional
-        Grid spacing (dz, dy, dx). Default is (1.0, 1.0, 1.0)
-    padding : tuple[int, int, int], optional)
-        Zero-padding for (Z, Y, X) to add to each side.
+        Grid spacing (dz, dy, dx).
+    z_padding : int, optional
+        Zero-padding to add to each side of Z dimension.
 
     Returns
-    --------
+    -------
     torch.Tensor
-        The curl-free (irrotational) component (3, Z, Y, X).
-    """
+        Curl-free (irrotational) component with shape (3, Z, Y, X).
 
+    References
+    ----------
+    .. [1] Bhatia et al., "The Helmholtz-Hodge Decomposition—A Survey",
+           IEEE TVCG, 2013. DOI:10.1109/TVCG.2012.316
+    .. [2] Hinkle et al., "4D MAP Image Reconstruction Incorporating
+           Organ Motion", IPMI, 2009. DOI:10.1007/978-3-642-02498-6_56
+    """
     if input.dim() != 4 or input.shape[0] != 3:
-        raise ValueError("Input tensor must have shape (3, Z, Y, X)")
+        raise ValueError("Input must have shape (3, Z, Y, X)")
 
     device = input.device
     dz, dy, dx = spacing
-    pad_z, pad_y, pad_x = padding
 
-    # Padding
-    if any(p > 0 for p in padding):
-        pad_dims = (pad_x, pad_x, pad_y, pad_y, pad_z, pad_z)
-        vec_padded = F.pad(input, pad_dims, mode="constant", value=0.0)
-    else:
-        vec_padded = input.clone()
+    if z_padding > 0:
+        input = F.pad(
+            input,
+            (0, 0, 0, 0, z_padding, z_padding),
+            mode="constant",
+            value=0.0,
+        )
 
-    z_pad, y_pad, x_pad = vec_padded.shape[1:]
+    _, Nz, Ny, Nx = input.shape
 
-    # Create k-vectors and k-squared
-    k_z_freqs = torch.fft.fftfreq(z_pad, d=dz, device=device)
-    k_y_freqs = torch.fft.fftfreq(y_pad, d=dy, device=device)
-    k_x_freqs = torch.fft.fftfreq(x_pad, d=dx, device=device)
+    W_vec, W_sq = _build_wavenumbers(Nz, Ny, Nx, dz, dy, dx, device)
+    V_cf_hat = _project_curl_free(input, W_vec, W_sq)
+    V_cf = torch.fft.ifftn(V_cf_hat, dim=(1, 2, 3)).real
 
-    Kz, Ky, Kx = torch.meshgrid(k_z_freqs, k_y_freqs, k_x_freqs, indexing="ij")
+    if z_padding > 0:
+        V_cf = V_cf[:, z_padding:-z_padding, :, :].clone()
 
-    # Stack k-vectors into a (3, Z, Y, X) tensor
-    k_vec = torch.stack([Kz, Ky, Kx], dim=0)
-    del Kz, Ky, Kx, k_z_freqs, k_y_freqs, k_x_freqs
-    k_sq = torch.sum(k_vec**2, dim=0)
-    # Avoid division by zero at k=0
-    k_sq[0, 0, 0] = 1.0
+    return V_cf
 
-    # Forward FFT
-    vec_k_padded = torch.fft.fftn(vec_padded, dim=(1, 2, 3))
-    del vec_padded  # Free padded real-space tensor
 
-    # Projection in Fourier space
-    # (k · V_k)
-    k_dot_Vk = torch.sum(k_vec * vec_k_padded, dim=0)
-    del vec_k_padded
-    projection_scalar = k_dot_Vk / k_sq
-    del k_dot_Vk, k_sq
+def _build_wavenumbers(
+    Nz: int,
+    Ny: int,
+    Nx: int,
+    dz: float,
+    dy: float,
+    dx: float,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build finite-difference wavenumber arrays."""
 
-    # Calculate the curl-free component in k-space
-    # cf_k = projection_scalar * k_vec
-    cf_k = projection_scalar.unsqueeze(0) * k_vec
-    del projection_scalar, k_vec
+    freq_z = torch.fft.fftfreq(Nz, d=1.0, device=device)
+    freq_y = torch.fft.fftfreq(Ny, d=1.0, device=device)
+    freq_x = torch.fft.fftfreq(Nx, d=1.0, device=device)
 
-    # Inverse FFT
-    cf_padded = torch.fft.ifftn(cf_k, dim=(1, 2, 3))
-    del cf_k
-    cf_padded_real = cf_padded.real
+    Fz, Fy, Fx = torch.meshgrid(freq_z, freq_y, freq_x, indexing="ij")
 
-    if any(p > 0 for p in padding):
-        cf_component = cf_padded_real[
-            :, pad_z : z_pad - pad_z, pad_y : y_pad - pad_y, pad_x : x_pad - pad_x
-        ].clone()
-    else:
-        cf_component = cf_padded_real.clone()
+    Wz = torch.sin(2 * torch.pi * Fz) / dz
+    Wy = torch.sin(2 * torch.pi * Fy) / dy
+    Wx = torch.sin(2 * torch.pi * Fx) / dx
 
-    return cf_component
+    W_vec = torch.stack([Wz, Wy, Wx], dim=0)
+    W_sq = Wz**2 + Wy**2 + Wx**2
+
+    return W_vec, W_sq
+
+
+def _project_curl_free(
+    input: torch.Tensor,
+    W_vec: torch.Tensor,
+    W_sq: torch.Tensor,
+) -> torch.Tensor:
+    """Project vector field onto curl-free component in Fourier space."""
+
+    V_hat = torch.fft.fftn(input, dim=(1, 2, 3))
+    W_dot_V = torch.sum(W_vec * V_hat, dim=0)
+
+    # Handle DC component
+    W_sq[0, 0, 0] = 1.0
+    projection = W_dot_V / W_sq
+    projection[0, 0, 0] = 0.0
+
+    return projection.unsqueeze(0) * W_vec
 
 
 def decompose_flow(
@@ -222,11 +240,10 @@ def decompose_flow(
         The curl-free component of the flows. This is returned in np.float32.
     """
     dP = torch.from_numpy(dP).to(device=device, dtype=torch.float32)
-    pad_z_amount = int(dP.shape[1] * z_pad_fraction)
-    padding_tuple = (pad_z_amount, 0, 0)
+    z_padding = int(dP.shape[1] * z_pad_fraction)
 
     cf_component = _get_curl_free_component(
-        dP,
-        padding=padding_tuple,
+        input=dP,
+        z_padding=z_padding,
     )
     return cf_component.cpu().numpy()
