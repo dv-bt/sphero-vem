@@ -4,6 +4,7 @@ Various utility functions for cellposes
 
 from pathlib import Path
 import numpy as np
+from scipy.special import expit
 import pandas as pd
 from cellpose import metrics
 import zarr
@@ -197,7 +198,7 @@ def _get_edges_and_nodes(
     labels: ArrayLike, cellprob: ArrayLike, edge_map: ArrayLike
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Finds adjacencies and samples cellprob and edgemap at the boundaries.
+    Finds adjacencies and samples cellprob (logits) and edgemap at the boundaries.
     """
 
     # Build 6-connectivity element
@@ -240,7 +241,7 @@ def build_rag(
     -------
     graph.RAG
         Region adjacency graph with the edge parameters
-        - 'prob_weight': mean cell probability
+        - 'prob_weight': mean cell probability (probability of mean logit value)
         - 'edge_weight': mean edge probability
         - 'count': number of boundary voxels
         - 'weight': 1 - prob_weight + edge_weight
@@ -273,6 +274,7 @@ def build_rag(
         )
         .reset_index()
     )
+    edge_stats["prob_weight"] = expit(edge_stats["prob_weight"])
     edge_stats["weight"] = 1 - (edge_stats["prob_weight"] - edge_stats["edge_weight"])
 
     # Create the edge list for the graph constructor
