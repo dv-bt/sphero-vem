@@ -245,39 +245,32 @@ class NanoparticleSegmentation:
         w_bg = self._init_w_bg()
         p_np = self._init_p_np()
 
-        def neg_log_likelihood(w_bg: float) -> np.float64:
-            """Calculate complete negative data log likelihood"""
+        def neg_log_likelihood(w_bg: float, p_np: np.ndarray) -> np.float64:
+            """Calculate observed negative data log likelihood"""
             mix = w_bg * self.p_bg + (1 - w_bg) * p_np
             return -np.sum(self.p_stack * np.log(mix + self.config.eps))
 
         nll_prev = np.inf
         for i in range(self.config.max_iter):
             # E-step
-            log_bg = np.log(w_bg + self.config.eps) + np.log(
-                self.p_bg + self.config.eps
-            )
-            log_np = np.log(1 - w_bg + self.config.eps) + np.log(p_np + self.config.eps)
-            t = np.maximum(log_bg, log_np)
-            den = t + np.log(np.exp(log_bg - t) + np.exp(log_np - t))
-            gamma_bg = np.exp(log_bg - den)
+            num_bg = w_bg * self.p_bg
+            num_np = (1 - w_bg) * p_np
+            gamma_bg = num_bg / (num_bg + num_np + self.config.eps)
 
             # M-step
             q = (1.0 - gamma_bg) * self.p_stack
-            if q.sum() > 0:
+            q_sum = q.sum()
+            if q.sum() > self.config.eps:
                 p_np = self._normalize_pmf(q)
+                w_bg = np.sum(self.p_stack * gamma_bg)
+                w_bg = np.clip(w_bg, self.config.eps, 1 - self.config.eps)
             else:
-                # keep previous p_np
-                p_np = p_np
+                raise RuntimeError(
+                    f"EM collapsed at iteration {i}: foreground responsibility "
+                    f"vanished (q_sum={q_sum:.2e}). Check initialization or input data."
+                )
 
-            # M-step for w_bg: minimize NLL
-            result_scalar = minimize_scalar(
-                neg_log_likelihood,
-                bounds=(self.config.eps, 1 - self.config.eps),
-                method="bounded",
-            )
-            w_bg = result_scalar.x
-
-            nll = neg_log_likelihood(w_bg)
+            nll = neg_log_likelihood(w_bg, p_np)
             if -(nll - nll_prev) < self.config.nll_tol:
                 break
             nll_prev = nll
