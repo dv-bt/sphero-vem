@@ -327,3 +327,47 @@ def temporary_zarr(
     finally:
         # Clean up immediately on exit
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def bbox_expand(bbox: tuple[int], margin: int, im_shape: tuple[int]) -> tuple[int]:
+    """Expand bounding box by margin without indexing out of image bounds.
+
+    Parameters
+    ----------
+    bbox : tuple[int]
+        Bounding box coordinates in the form (x0_min, x1_min, ..., x0_max, x1_max, ...).
+        The order of the coordinates x_i should be the same as numpy axis.
+    margin : int
+        Contant margin for bounding box expansion. The bounding box will be expanded
+        by this value in all directions.
+    im_shape : tuple[int]
+        Image shape.
+
+    Returns
+    -------
+    bbox_exp : tuple[int]
+        Expanded bounding box, in the form (x0_min, x1_min, ..., x0_max, x1_max, ...).
+    """
+    n_dim = len(bbox) // 2
+    bbox_arr = np.array(bbox)
+    offsets = np.array([[-margin] * n_dim + [margin] * n_dim])
+    expanded = np.clip(bbox_arr + offsets, 0, im_shape * 2)
+    return tuple(*expanded.tolist())
+
+
+def slice_from_bbox(bbox: tuple) -> tuple[slice]:
+    """Get slice from a bounding box for easy image cropping.
+
+    Parameters
+    ----------
+    bbox : tuple[int]
+        Bounding box coordinates in the form (x0_min, x1_min, ..., x0_max, x1_max, ...).
+        The order of the coordinates x_i should be the same as numpy axis.
+
+    Returns
+    -------
+    tuple[slice]
+        Tuple of slices for indexing.
+    """
+    n_dim = len(bbox) // 2
+    return tuple(slice(bbox[i], bbox[i + n_dim]) for i in range(n_dim))

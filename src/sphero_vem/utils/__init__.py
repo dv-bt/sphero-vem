@@ -14,6 +14,8 @@ from .misc import (
     dirname_from_spacing,
     get_multiscales,
     temporary_zarr,
+    bbox_expand,
+    slice_from_bbox,
 )
 
 from .config import to_serializable, BaseConfig, ProcessingStep
@@ -37,4 +39,6 @@ __all__ = [
     "BaseConfig",
     "ProcessingStep",
     "temporary_zarr",
+    "bbox_expand",
+    "slice_from_bbox",
 ]
