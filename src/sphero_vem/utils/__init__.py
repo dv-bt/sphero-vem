@@ -16,6 +16,8 @@ from .misc import (
     temporary_zarr,
     bbox_expand,
     slice_from_bbox,
+    check_isotropic,
+    weighted_std,
 )
 
 from .config import to_serializable, BaseConfig, ProcessingStep
@@ -41,4 +43,6 @@ __all__ = [
     "temporary_zarr",
     "bbox_expand",
     "slice_from_bbox",
+    "check_isotropic",
+    "weighted_std",
 ]

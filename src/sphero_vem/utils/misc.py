@@ -10,6 +10,7 @@ import os
 import yaml
 import json
 from datetime import datetime
+from collections.abc import Sequence
 import torch
 import zarr
 import numpy as np
@@ -338,7 +339,7 @@ def bbox_expand(bbox: tuple[int], margin: int, im_shape: tuple[int]) -> tuple[in
         Bounding box coordinates in the form (x0_min, x1_min, ..., x0_max, x1_max, ...).
         The order of the coordinates x_i should be the same as numpy axis.
     margin : int
-        Contant margin for bounding box expansion. The bounding box will be expanded
+        Constant margin for bounding box expansion. The bounding box will be expanded
         by this value in all directions.
     im_shape : tuple[int]
         Image shape.
@@ -371,3 +372,52 @@ def slice_from_bbox(bbox: tuple) -> tuple[slice]:
     """
     n_dim = len(bbox) // 2
     return tuple(slice(bbox[i], bbox[i + n_dim]) for i in range(n_dim))
+
+
+def check_isotropic(spacing: Sequence[float], raise_error: bool = False) -> bool:
+    """Check if spacing is isotropic, and optionally raise an error if it's not.
+
+    Parameters
+    ----------
+    spacing : Sequence[float]
+        A sequence containing the voxel spacing to check.
+    raise_error : bool
+        Flag that controls whether to raise an error is the check fails.
+        Default is False.
+
+    Returns
+    -------
+    bool
+        True is the spacing is isotropic.
+
+    Raises
+    ------
+    ValueError
+        If the spacing is not isotropic and raise_error is True.
+    """
+    check = True
+    if len(set(spacing)) > 1:
+        check = False
+        if raise_error:
+            raise ValueError(f"Spacing must be isotropic. Received {spacing}")
+    return check
+
+
+def weighted_std(values: np.ndarray, weights: np.ndarray) -> float:
+    """Calculate the weighted standard deviation of the data.
+
+    Parameters
+    ----------
+    values : np.ndarray
+        Array containing the data.
+    weights : np.ndarray
+        Array containing the weights. It must have the same shape as values.
+
+    Returns
+    -------
+    float
+        The weighted standardn deviation.
+    """
+    mean = np.average(values, weights=weights)
+    var = np.average((values - mean) ** 2, weights=weights)
+    return np.sqrt(var)
