@@ -307,6 +307,7 @@ def props_sdf(
         "sphericity": sphericity,
         "surface_area_boundary": crop_area,
         "truncation_fraction": crop_area / (surface_area + crop_area),
+        "diam_equiv": (3 / (4 * xp.pi) * volume) ** (1 / 3) * 2,
     }
     return results, sdf
 
