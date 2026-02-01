@@ -10,7 +10,14 @@ import pandas as pd
 import zarr
 from scipy.stats import linregress
 from skimage.measure import marching_cubes
-from sphero_vem.utils import bbox_expand, slice_from_bbox, check_isotropic, weighted_std
+from sphero_vem.utils import (
+    bbox_expand,
+    slice_from_bbox,
+    check_isotropic,
+    weighted_std,
+    flatten_for_save,
+    reconstruct_tuples,
+)
 from sphero_vem.utils.accelerator import ndi, gpu_dispatch, xp, ArrayLike, ski, to_host
 from sphero_vem.utils.config import BaseConfig
 
@@ -58,6 +65,11 @@ class LabelAnalysisConfig(BaseConfig):
         Number of epsilon values sampled in log-space during fractal dimension
         calculation.
         Default is 30.
+    sep : str
+        Separator used for unpacking tuple columns when saving the region properties
+        dataframe to parquet using `save_regionprops`. This should be used by
+        `read_regionprops` to reconstruct the tuple columns, e.g. bbox, centroid...
+        Default is `"__"`
 
     Attributes
     ----------
@@ -81,6 +93,7 @@ class LabelAnalysisConfig(BaseConfig):
     voxel_only: bool = False
     sigma_frac: float = 0.7
     n_steps_frac: int = 30
+    sep: int = "__"
 
     array_path: Path = field(init=False)
     save_root: Path = field(init=False)
@@ -1007,7 +1020,7 @@ def analyze_labels(config: LabelAnalysisConfig) -> None:
     """
     root = zarr.open_group(config.root_path, mode="a")
     label_array = root.get(config.array_path)
-    results = label_properties(
+    props = label_properties(
         labels=label_array[:],
         spacing=config.spacing,
         bbox_margin=config.bbox_margin,
@@ -1019,19 +1032,73 @@ def analyze_labels(config: LabelAnalysisConfig) -> None:
         sigma_frac=config.sigma_frac,
         n_steps_frac=config.n_steps_frac,
     )
-    results = flatten_for_save(results)
-    results.to_parquet(config.save_root / "regionprops.parquet")
+    save_regionprops(
+        props, dst_path=config.save_root / "regionprops.parquet", sep=config.sep
+    )
     config.to_json(config.save_root / "analysis-config.json")
 
 
-def flatten_for_save(df: pd.DataFrame) -> pd.DataFrame:
-    """Flatten tuple columns to indexed columns for parquet storage."""
-    df_out = df.copy()
+def save_regionprops(
+    props: pd.DataFrame,
+    dst_path: Path,
+    sep: str = "__",
+) -> None:
+    """
+    Save region properties to parquet with tuple columns flattened.
 
-    for col in df.columns:
-        if isinstance(df[col].iloc[0], tuple):
-            for i in range(len(df[col].iloc[0])):
-                df_out[f"{col}_{i}"] = df[col].apply(lambda x, i=i: x[i])
-            df_out = df_out.drop(columns=[col])
+    Tuple and list columns are unpacked into indexed scalar columns
+    (e.g., ``centroid`` → ``centroid__0``, ``centroid__1``, ...) for
+    parquet compatibility. The index is not saved; all information
+    should be encoded in the columns.
 
-    return df_out
+    Parameters
+    ----------
+    props : pd.DataFrame
+        DataFrame of region properties, potentially containing tuple
+        or list valued columns.
+    dst_path : Path
+        Destination path for the parquet file.
+    sep : str, optional
+        Separator for flattened column names. Must match the `sep`
+        passed to `read_regionprops` for round-tripping. Default is
+        ``"__"``.
+
+    See Also
+    --------
+    read_regionprops : Inverse operation.
+    flatten_for_save : Underlying flattening logic.
+    """
+    props = flatten_for_save(props, sep=sep)
+    props.to_parquet(dst_path, index=False)
+
+
+def read_regionprops(
+    src_path: Path,
+    sep: str = "__",
+) -> pd.DataFrame:
+    """
+    Read region properties from parquet and reconstruct tuple columns.
+
+    Indexed scalar columns (e.g., ``centroid__0``, ``centroid__1``, ...)
+    are packed back into tuple columns (``centroid``).
+
+    Parameters
+    ----------
+    src_path : Path
+        Path to the parquet file saved by `save_regionprops`.
+    sep : str, optional
+        Separator used when the file was saved. Default is ``"__"``.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with tuple columns reconstructed.
+
+    See Also
+    --------
+    save_regionprops : Inverse operation.
+    reconstruct_tuples : Underlying reconstruction logic.
+    """
+    props = pd.read_parquet(src_path)
+    props = reconstruct_tuples(props, sep=sep)
+    return props

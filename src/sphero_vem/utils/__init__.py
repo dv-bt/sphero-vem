@@ -18,6 +18,8 @@ from .misc import (
     slice_from_bbox,
     check_isotropic,
     weighted_std,
+    flatten_for_save,
+    reconstruct_tuples,
 )
 
 from .config import to_serializable, BaseConfig, ProcessingStep
@@ -45,4 +47,6 @@ __all__ = [
     "slice_from_bbox",
     "check_isotropic",
     "weighted_std",
+    "flatten_for_save",
+    "reconstruct_tuples",
 ]

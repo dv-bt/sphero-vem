@@ -14,6 +14,7 @@ from collections.abc import Sequence
 import torch
 import zarr
 import numpy as np
+import pandas as pd
 
 
 def get_file_info(filepath: Path, data_root: Path) -> dict:
@@ -421,3 +422,119 @@ def weighted_std(values: np.ndarray, weights: np.ndarray) -> float:
     mean = np.average(values, weights=weights)
     var = np.average((values - mean) ** 2, weights=weights)
     return np.sqrt(var)
+
+
+def flatten_for_save(
+    df: pd.DataFrame,
+    sep: str = "__",
+) -> pd.DataFrame:
+    """
+    Unpack tuple/list columns into indexed scalar columns for storage.
+
+    Tuple columns are expanded into separate columns with names
+    ``{original_name}{sep}0``, ``{original_name}{sep}1``, etc.
+    The original tuple column is dropped.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with possible tuple or list valued columns.
+    sep : str, optional
+        Separator between column name and index. Must be passed
+        identically to `reconstruct_tuples` for round-tripping.
+        Default is ``"__"``.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with all tuple columns replaced by scalar columns.
+
+    Raises
+    ------
+    ValueError
+        If any column name already contains `sep`, which would
+        create ambiguity on reconstruction.
+
+    See Also
+    --------
+    reconstruct_tuples : Inverse operation.
+    """
+    ambiguous = [c for c in df.columns if sep in str(c)]
+    if ambiguous:
+        raise ValueError(
+            f"Column names already contain '{sep}', which would "
+            f"create ambiguity on reconstruction: {ambiguous}"
+        )
+
+    df_out = df.copy()
+    for col in df.columns:
+        first = df[col].iloc[0]
+        if isinstance(first, (tuple, list)):
+            n = len(first)
+            for i in range(n):
+                df_out[f"{col}{sep}{i}"] = df[col].apply(lambda x, i=i: x[i])
+            df_out = df_out.drop(columns=[col])
+
+    return df_out
+
+
+def reconstruct_tuples(
+    df: pd.DataFrame,
+    sep: str = "__",
+) -> pd.DataFrame:
+    """
+    Pack indexed scalar columns back into tuple columns.
+
+    Columns matching the pattern ``{name}{sep}0``, ``{name}{sep}1``, ...
+    are merged into a single tuple column ``{name}``. The indexed
+    columns are dropped.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame as loaded from parquet, with flattened tuple columns.
+    sep : str, optional
+        Separator used by `flatten_for_save`. Default is ``"__"``.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with indexed columns replaced by tuple columns.
+
+    Raises
+    ------
+    ValueError
+        If indexed columns for a group are not contiguous starting
+        from 0 (e.g., ``bbox__0``, ``bbox__2`` without ``bbox__1``).
+
+    See Also
+    --------
+    flatten_for_save : Inverse operation.
+    """
+    groups: dict[str, list[tuple[int, str]]] = {}
+    passthrough: list[str] = []
+
+    for col in df.columns:
+        if sep in col:
+            base, _, suffix = col.rpartition(sep)
+            if suffix.isdigit():
+                groups.setdefault(base, []).append((int(suffix), col))
+            else:
+                passthrough.append(col)
+        else:
+            passthrough.append(col)
+
+    df_out = df[passthrough].copy()
+
+    for base, idx_cols in groups.items():
+        idx_cols.sort()
+        indices = [i for i, _ in idx_cols]
+        if indices != list(range(len(indices))):
+            raise ValueError(
+                f"Non-contiguous indices for '{base}': found {indices}, "
+                f"expected {list(range(len(indices)))}"
+            )
+        col_names = [c for _, c in idx_cols]
+        df_out[base] = list(zip(*[df[c] for c in col_names]))
+
+    return df_out
