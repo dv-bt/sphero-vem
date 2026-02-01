@@ -17,6 +17,13 @@ def to_serializable(input_dict) -> dict:
     return json.loads(json_string)
 
 
+def _list_to_tuple(value: Any) -> tuple:
+    """Convert list to tuple, handling nested structures."""
+    if isinstance(value, list):
+        return tuple(value)
+    return value
+
+
 class BaseConfig:
     """Base config class providing JSON serialization for config dataclasses."""
 
@@ -24,7 +31,13 @@ class BaseConfig:
     EXCLUDED_JSON_FIELDS: ClassVar[set[str]] = set()
     # Fields that are not relevant for scientific reproducibility
     EXCLUDED_PROCESSING_FIELDS: ClassVar[set[str]] = set()
-    DACITE_CONFIG = dacite.Config(type_hooks={Path: Path})
+    DACITE_CONFIG = dacite.Config(
+        type_hooks={
+            Path: Path,
+            tuple: _list_to_tuple,
+        },
+        cast=[tuple],
+    )
 
     def to_json(self, filepath: str | Path) -> None:
         """Saves the dataclass instance to a JSON file."""
