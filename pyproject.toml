@@ -29,6 +29,7 @@ dependencies = [
     "dask-cuda[cu12] (>=25.10.0,<26.0.0) ; sys_platform == 'linux'",
     "cucim-cu12 (>=25.12.0,<26.0.0) ; sys_platform == 'linux'",
     "dacite (>=1.9.2,<2.0.0)",
+    "cuvs-cu12 (>=25.12.0,<26.0.0) ; sys_platform == \"linux\"",
 ]
 
 

@@ -80,6 +80,11 @@ class LabelAnalysisConfig(BaseConfig):
         `labels/{seg_target}/tables/`.
     spacing : tuple[float]
         Voxel spacing in micrometers, read from zarr attributes.
+        NOTE: this assumes that the spacing stored in the zarr attributes is in nm.
+    cell_array_path : Path
+        Path to the array containing the cell labels with the same spacing as the
+        analyzed label array. This is used when analyzing targets other than cells to
+        assign their parent cell.
     """
 
     root_path: Path
@@ -98,15 +103,17 @@ class LabelAnalysisConfig(BaseConfig):
     array_path: Path = field(init=False)
     save_root: Path = field(init=False)
     spacing: tuple[float] = field(init=False)
+    cell_array_path: Path = field(init=False)
 
     def __post_init__(self):
         self.array_path = (
             self.root_path / f"labels/{self.seg_target}/masks/{self.scale_dir}"
         )
         self.save_root = self.root_path / f"labels/{self.seg_target}/tables"
-        src_zarr = zarr.open_array(self.array_path)
+        self.cell_array_path = self.root_path / f"labels/cells/masks/{self.scale_dir}"
 
         # Spacing is assumed to be in nm and converted to µm.
+        src_zarr = zarr.open_array(self.array_path)
         self.spacing = tuple(i / 1000 for i in src_zarr.attrs.get("spacing"))
 
 
@@ -155,7 +162,7 @@ def props_voxel(
             "bbox_exp": bbox_expand(
                 prop.bbox, margin=bbox_margin, im_shape=labels.shape
             ),
-            "eigvals": tuple(sorted(prop.inertia_tensor_eigvals)),
+            "eigvals": tuple(float(i) for i in sorted(prop.inertia_tensor_eigvals)),
             "centroid": prop.centroid,
         }
         for prop in props
@@ -952,7 +959,7 @@ def label_properties(
 
     results = props_voxel(labels, bbox_margin=bbox_margin)
     if not voxel_only:
-        for entry in tqdm(results):
+        for entry in tqdm(results, "Analyzing labels"):
             sel_slice = slice_from_bbox(entry["bbox_exp"])
             labels_crop = labels[sel_slice]
 
@@ -1018,8 +1025,7 @@ def analyze_labels(config: LabelAnalysisConfig) -> None:
     - `analysis-config.json`: Serialized configuration for reproducibility
     - `meshes/mesh-{label}.npz`: Per-label mesh data (if not voxel_only)
     """
-    root = zarr.open_group(config.root_path, mode="a")
-    label_array = root.get(config.array_path)
+    label_array = zarr.open_array(config.array_path)
     props = label_properties(
         labels=label_array[:],
         spacing=config.spacing,
@@ -1029,9 +1035,15 @@ def analyze_labels(config: LabelAnalysisConfig) -> None:
         mesh_downsample_factor=config.mesh_downsample_factor,
         h=config.h,
         mesh_save_root=config.save_root,
+        voxel_only=config.voxel_only,
         sigma_frac=config.sigma_frac,
         n_steps_frac=config.n_steps_frac,
     )
+
+    if config.seg_target != "cells":
+        cell_array = zarr.open_array(config.cell_array_path)
+        props = assign_cell(props=props, cells=cell_array[:])
+
     save_regionprops(
         props, dst_path=config.save_root / "regionprops.parquet", sep=config.sep
     )
@@ -1101,4 +1113,25 @@ def read_regionprops(
     """
     props = pd.read_parquet(src_path)
     props = reconstruct_tuples(props, sep=sep)
+    return props
+
+
+def assign_cell(props: pd.DataFrame, cells: np.ndarray) -> pd.DataFrame:
+    """Assign parent cell and return dataframe by looking up centroid
+
+    Parameters
+    ----------
+    props : pd.DataFrame
+        The dataframe containing the region properties. It should have a `"centroid"`
+        column containing the tuple indexing the object centroid.
+    cells : np.ndarray
+        An array containing the cells masks labeled by instance.
+
+    Returns
+    -------
+    pd.DataFrame
+        The updated region properties dataframe with a new column `"parent_cell"`.
+    """
+    indices = np.array(props["centroid"].tolist()).astype(int)
+    props["parent_cell"] = cells[tuple(indices.T)]
     return props
