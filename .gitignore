@@ -164,3 +164,8 @@ scripts/untracked/
 
 # Folder with notebooks with plots for the paper
 notebooks/paper
+
+# Temporarily ignore docs
+docs/
+mkdocs.yml/
+.github/workflows/docs.yml
