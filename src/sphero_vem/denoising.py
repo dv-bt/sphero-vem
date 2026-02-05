@@ -29,7 +29,7 @@ from sphero_vem.utils.logging import (
 
 
 @dataclass
-class DenosingConfig(BaseConfig):
+class DenoisingConfig(BaseConfig):
     root_path: Path
     src_path: str
     num_images: int = 10
@@ -94,7 +94,7 @@ class DenosingConfig(BaseConfig):
             file.write(self.n2v_config.model_dump_json(indent=4))
 
 
-def train_n2v(config: DenosingConfig) -> None:
+def train_n2v(config: DenoisingConfig) -> None:
     """Train Noise2Void using the parameters specifed in config."""
     root = zarr.open_group(config.root_path, mode="r")
     src_array = root.get(config.src_path)
@@ -250,7 +250,7 @@ def denoise_stack(
     root = zarr.open_group(root_path, mode="a")
     src_zarr = root.get(src_path)
 
-    config = DenosingConfig.from_json(model_root / f"{model_name}/config.json")
+    config = DenoisingConfig.from_json(model_root / f"{model_name}/config.json")
     careamist = _load_model(model_name=model_name, model_root=model_root)
 
     with temporary_zarr(
