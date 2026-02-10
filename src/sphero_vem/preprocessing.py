@@ -2,6 +2,7 @@
 Functions for preprocessing images.
 """
 
+import warnings
 from pathlib import Path
 from typing import Literal
 from tqdm import tqdm
@@ -12,12 +13,12 @@ from torchvision import tv_tensors
 import torchvision.transforms.v2 as transforms
 from torchvision.transforms.functional import resize
 import zarr
+import dask
 import dask.array as da
-from dask.diagnostics import ProgressBar
-import dask_image.ndinterp
 import dask_image
+import dask_image.ndinterp
+from dask.diagnostics import ProgressBar
 from sphero_vem.utils import dirname_from_spacing, create_ome_multiscales
-from sphero_vem.utils.accelerator import da_to_device, xp, da_to_host, ski
 
 
 class Normalize(torch.nn.Module):
@@ -155,80 +156,122 @@ def resample_array(
     target_spacing: tuple[int, int, int],
     order: int = 1,
     zarr_chunks: tuple[int, int, int] = (1, 1024, 1024),
-    antialiasing: bool = False,
+    n_workers: int = 4,
 ) -> None:
-    """Resample an array in a Zarr archive to have the target spacing."""
+    """Resample an array in a Zarr archive to the target voxel spacing.
+
+    Uses a lazy Gaussian pre-blur followed by affine transform via dask_image,
+    keeping memory usage bounded to chunk size throughout. Anti-aliasing is
+    applied only along downsampled axes, mirroring skimage.transform.resize.
+    Integer label data (integer dtype + order=0) is resampled without
+    anti-aliasing. float16 arrays are promoted to float32 for processing
+    and cast back on output, as scipy.ndimage does not support float16.
+
+    Parameters
+    ----------
+    zarr_path : Path
+        Path to the Zarr archive.
+    array_path : str
+        Path to the source array within the archive.
+    target_spacing : tuple[int, int, int]
+        Target voxel spacing (Z, Y, X) in nanometers.
+    order : int
+        Spline interpolation order. 0 = nearest neighbour (labels),
+        1 = linear (images). Default 1.
+    zarr_chunks : tuple[int, int, int]
+        Chunk shape for the output Zarr array.
+    n_workers : int
+        Number of threads for dask's threaded scheduler. Default 4.
+    """
+
+    Z_SCALE_WARN_THRESHOLD = 2.5
 
     root = zarr.open_group(zarr_path)
     src_array: zarr.Array = root.get(array_path)
-    if not src_array:
-        raise FileExistsError(
-            f"The source array {array_path} was not found under {zarr_path}"
+    if src_array is None:
+        raise FileNotFoundError(
+            f"Source array {array_path} not found under {zarr_path}"
         )
 
-    original_shape = src_array.shape
+    src_dtype = np.dtype(src_array.dtype)
+    original_shape = np.array(src_array.shape)
+    src_spacing = np.asarray(src_array.attrs["spacing"])
 
     spacing_dir = dirname_from_spacing(target_spacing)
-    try:
-        ref_array: zarr.Array = root.get(f"images/{spacing_dir}")
-        target_shape = ref_array.shape
-    except AttributeError:
-        ratio = np.asarray(src_array.attrs["spacing"]) / np.asarray(target_spacing)
-        target_shape = ratio * original_shape
-        target_shape = target_shape.astype(int).tolist()
-    scale_factors = np.array(original_shape) / np.array(target_shape)
-    scaling_matrix = np.diag(scale_factors)
+    ref_array: zarr.Array = root.get(f"images/{spacing_dir}")
+    if ref_array is not None:
+        target_shape = list(ref_array.shape)
+    else:
+        ratio = src_spacing / np.asarray(target_spacing)
+        target_shape = (ratio * original_shape).astype(int).tolist()
 
-    ## Assign dask array
+    scale_factors = original_shape / np.array(target_shape)
+
+    z_magnitude = max(scale_factors[0], 1.0 / scale_factors[0])
+    if z_magnitude > Z_SCALE_WARN_THRESHOLD:
+        direction = "downsampling" if scale_factors[0] > 1 else "upsampling"
+        warnings.warn(
+            f"Large Z {direction} factor {z_magnitude:.2f}x "
+            f"(src spacing: {src_spacing[0]}, target: {target_spacing[0]}). "
+            f"Gaussian pre-blur operates per-chunk; boundary artifacts may "
+            f"appear at chunk edges for large kernels.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    is_label = np.issubdtype(src_dtype, np.integer) and order == 0
+    working_dtype = (
+        np.dtype("float32") if src_dtype == np.dtype("float16") else src_dtype
+    )
+
     temp_chunks = (8, 1024, 1024)
     src_dask: da.Array = da.from_zarr(src_array).rechunk(temp_chunks)
-    src_dask: da.Array = da_to_device(src_dask)
-    if src_dask.dtype == xp.float16:
-        src_dask = src_dask.astype(xp.float32)
-    if not antialiasing:
-        resampled_dask = dask_image.ndinterp.affine_transform(
-            src_dask,
-            matrix=scaling_matrix,
-            output_shape=target_shape,
-            output_chunks=temp_chunks,
-            order=order,
-            mode="nearest",
-        )
-    else:
-        resampled_dask = ski.transform.resize(
-            src_dask,
-            output_shape=target_shape,
-            order=order,
-            preserve_range=True,
-        )
-    resampled_dask = da_to_host(resampled_dask)
+
+    if working_dtype != src_dtype:
+        src_dask = src_dask.astype(working_dtype)
+
+    aa_sigmas = np.zeros(3)
+    if not is_label:
+        aa_sigmas = np.maximum(0.0, (scale_factors - 1.0) / 2.0)
+        if np.any(aa_sigmas > 0):
+            src_dask = dask_image.ndfilters.gaussian_filter(
+                src_dask, sigma=aa_sigmas.tolist()
+            )
+
+    resampled_dask: da.Array = dask_image.ndinterp.affine_transform(
+        src_dask,
+        matrix=np.diag(scale_factors),
+        output_shape=target_shape,
+        output_chunks=temp_chunks,
+        order=order,
+        mode="nearest",
+    )
+
+    if working_dtype != src_dtype:
+        resampled_dask = resampled_dask.astype(src_dtype)
 
     parent_group: zarr.Group = root.get(str(Path(src_array.path).parent))
-
     dst_zarr_path = f"{parent_group.path}/{spacing_dir}"
     dst_zarr = root.require_array(
         name=dst_zarr_path,
         shape=target_shape,
         chunks=zarr_chunks,
-        dtype=src_array.dtype,
+        dtype=src_dtype,
         compressors=src_array.compressors,
         overwrite=True,
     )
 
-    with ProgressBar():
-        resampled_dask.to_zarr(
-            dst_zarr,
-            overwrite=True,
-        )
+    with ProgressBar(), dask.config.set(num_workers=n_workers):
+        resampled_dask.to_zarr(dst_zarr, overwrite=True)
 
-    # Array metadata
     dst_zarr.attrs["spacing"] = target_spacing
-    dst_zarr.attrs["processing"] = src_array.attrs["processing"] + [
+    dst_zarr.attrs["processing"] = src_array.attrs.get("processing", []) + [
         {
             "step": "resample",
             "order": order,
-            "scale_factors": [float(i) for i in scale_factors],
-            "antialiasing": antialiasing,
+            "scale_factors": scale_factors.tolist(),
+            "anti_aliasing": not is_label,
+            "anti_aliasing_sigma": aa_sigmas.tolist(),
         }
     ]
     dst_zarr.attrs["inputs"] = src_array.path
