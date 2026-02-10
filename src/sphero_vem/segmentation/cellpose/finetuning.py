@@ -48,10 +48,9 @@ class CellposeFinetuneConfig(BaseConfig):
         self.model_name = f"cellposeSAM-{self.seg_target}-{timestamp()}"
         self.dir_experiment = Path(f"data/models/cellpose/{self.model_name}")
 
-        if self.save_predictions:
-            self.dir_predictions = Path(
-                f"data/processed/segmented/finetuning/{self.model_name}"
-            )
+        self.dir_predictions = Path(
+            f"data/processed/segmented/finetuning/{self.model_name}"
+        )
 
         # Load processing and spacing from manifest
         with open(self.dir_labeled / "manifest.json") as file:
