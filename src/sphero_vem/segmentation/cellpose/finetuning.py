@@ -12,10 +12,10 @@ from tqdm import tqdm
 import numpy as np
 from sklearn.model_selection import train_test_split
 import wandb
-import torch
 from cellpose import models, train, io
-from sphero_vem.utils import read_manifest, timestamp, get_file_info
-from sphero_vem.io import read_tensor, write_image
+from tifffile import imread
+from sphero_vem.utils import timestamp, get_file_info
+from sphero_vem.io import write_image
 
 
 @dataclass
@@ -23,7 +23,6 @@ class CellposeFinetuneConfig:
     """Configuration class for fine-tuning cellpose"""
 
     dir_labeled: Path | str
-    downscaling: int = 1
     learning_rate: float = 5e-5
     batch_size: int = 8
     n_epochs: int = 100
@@ -40,8 +39,8 @@ class CellposeFinetuneConfig:
     dir_experiment: Path = field(init=False)
     dir_predictions: Path = field(init=False)
     wandb_api_key: str = field(init=False)
-    downscaling_eff: int = field(init=False)
-    preprocessing: list[dict] = field(init=False)
+    processing: list[dict] = field(init=False)
+    spacing: list = field(init=False)
 
     def __post_init__(self):
         """Load environment variables and init derived values"""
@@ -52,9 +51,7 @@ class CellposeFinetuneConfig:
         self.wandb_api_key = os.getenv("API_KEY")
         self.data_root = Path("data")
 
-        ds_text = f"-ds{self.downscaling}" if self.downscaling else ""
-        self.model_name = f"cellposeSAM-{self.seg_target}{ds_text}-{timestamp()}"
-        self.dir_labeled = self.dir_labeled
+        self.model_name = f"cellposeSAM-{self.seg_target}-{timestamp()}"
         self.dir_experiment = Path(f"data/models/cellpose/{self.model_name}")
         if not self.dry_run:
             self.dir_experiment.mkdir(parents=True, exist_ok=True)
@@ -66,26 +63,11 @@ class CellposeFinetuneConfig:
             if not self.dry_run:
                 self.dir_predictions.mkdir(parents=True, exist_ok=True)
 
-        self.preprocessing = read_manifest(self.dir_labeled).get("processing", [])
-        self.downscaling_eff = self.calculate_downscaling()
-
-    def calculate_downscaling(self) -> int:
-        """Calcualte effective donwscaling to apply to images"""
-        downscaling_old = 1
-        try:
-            for processing in self.preprocessing:
-                if processing.get("step") == "downscaling":
-                    downscaling_old = processing["factor"]
-        # Account for manifest not conforming to standard representation
-        except AttributeError:
-            pass
-        if self.downscaling % downscaling_old == 0:
-            return self.downscaling // downscaling_old
-        else:
-            raise ValueError(
-                f"Supplied global downscaling {self.downscaling} is incompatible with "
-                f"labeled dataset already downscaled by factor {downscaling_old}"
-            )
+        # Load preprocessing and spacing from manifest
+        with open(self.dir_labeled / "manifest.json") as file:
+            manifest = json.load(file)
+            self.processing = manifest.get("processing")
+            self.spacing = manifest.get("spacing")
 
 
 def _generate_training_manifest(
@@ -101,8 +83,8 @@ def _generate_training_manifest(
         "learning_rate": config.learning_rate,
         "batch_size": config.batch_size,
         "n_epochs": config.n_epochs,
-        "preprocessing_training": [],
-        "preprocessing_labels": config.preprocessing,
+        "processing": config.processing,
+        "spacing": config.spacing,
         "train_files": [],
         "test_files": [],
     }
@@ -114,20 +96,6 @@ def _generate_training_manifest(
     for filepath in tqdm(test_files, "Generating test data hashes"):
         file_info = get_file_info(filepath, config.data_root)
         training_manifest["test_files"].append(file_info)
-
-    # For now keep it manual, consider automating step recognition.
-    if config.downscaling:
-        preprocessing = [
-            {
-                "step": "downscaling",
-                "factor": config.downscaling,
-                "factor_eff": config.downscaling_eff,
-                "normalization": None,
-            }
-        ]
-
-        for preprocessing_step in preprocessing:
-            training_manifest["preprocessing_training"].append(preprocessing_step)
 
     # Save manifest locally and send to WandB
     manifest_path = config.dir_experiment / "training_manifest.json"
@@ -187,9 +155,9 @@ class CellposeLogger:
             {
                 "learning_rate": config.learning_rate,
                 "batch_size": config.batch_size,
-                "downscaling": config.downscaling,
                 "n_epochs": config.n_epochs,
                 "use_bfloat16": config.use_bfloat16,
+                "spacing": config.spacing,
             }
         )
 
@@ -249,12 +217,6 @@ def _load_data(
     Example: with config.seg_target='cells', a valid image/labels pair is:
     - image.tif
     - labels/image-cells.tif
-    NOTE: that the downscaling factor defined for the model refers to the images in their
-    original size at acquisition. When loading data, prior downscaling done on the
-    train and test dataset is taken into account, and an effective downscaling is
-    applied to achieve the correct global downscaling factor. Particular care must be
-    used therefore when an already downscaled dataset is used, since not all factors
-    will give correct images.
 
     Parameters
     ----------
@@ -267,20 +229,13 @@ def _load_data(
     -------
     tuple[list[np.ndarray], list[np.ndarray]]
         A tuple containing two lists:
-        - First list: loaded and downscaled images as numpy arrays
-        - Second list: loaded and downscaled label masks as numpy arrays
+        - First list: loaded images as numpy arrays
+        - Second list: loaded label masks as numpy arrays
 
     """
-    data = [
-        read_tensor(path, None, config.downscaling_eff).numpy() for path in image_files
-    ]
+    data = [imread(path) for path in image_files]
     labels_files = [_labels_path(config, path) for path in image_files]
-    labels = [
-        read_tensor(
-            path, torch.uint8, config.downscaling_eff, resample_mode="nearest"
-        ).numpy()
-        for path in labels_files
-    ]
+    labels = [imread(path) for path in labels_files]
     return data, labels
 
 
