@@ -4,22 +4,22 @@ This module contains functions used to finetune cellpose models
 
 import os
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 import re
 import json
 import logging
-from tqdm import tqdm
 import numpy as np
 from sklearn.model_selection import train_test_split
 import wandb
 from cellpose import models, train, io
 from tifffile import imread
-from sphero_vem.utils import timestamp, get_file_info
+from sphero_vem.utils import timestamp
 from sphero_vem.io import write_image
+from sphero_vem.utils import BaseConfig
 
 
 @dataclass
-class CellposeFinetuneConfig:
+class CellposeFinetuneConfig(BaseConfig):
     """Configuration class for fine-tuning cellpose"""
 
     dir_labeled: Path | str
@@ -29,17 +29,13 @@ class CellposeFinetuneConfig:
     test_size: float = 0.2
     random_state: int = 42
     seg_target: str = "cells"
-    save_predictions: bool = True
+    save_predictions: bool = False
     use_bfloat16: bool = True
-    dry_run: bool = False
 
     # Parameters that are initialized by post_init
-    data_root: Path = field(init=False)
     model_name: str = field(init=False)
     dir_experiment: Path = field(init=False)
     dir_predictions: Path = field(init=False)
-    wandb_api_key: str = field(init=False)
-    processing: list[dict] = field(init=False)
     spacing: list = field(init=False)
 
     def __post_init__(self):
@@ -48,8 +44,6 @@ class CellposeFinetuneConfig:
             self.wandb_project = "cell-segmentation"
         elif self.seg_target == "nuclei":
             self.wandb_project = "nuclei-segmentation"
-        self.wandb_api_key = os.getenv("API_KEY")
-        self.data_root = Path("data")
 
         self.model_name = f"cellposeSAM-{self.seg_target}-{timestamp()}"
         self.dir_experiment = Path(f"data/models/cellpose/{self.model_name}")
@@ -60,13 +54,10 @@ class CellposeFinetuneConfig:
             self.dir_predictions = Path(
                 f"data/processed/segmented/finetuning/{self.model_name}"
             )
-            if not self.dry_run:
-                self.dir_predictions.mkdir(parents=True, exist_ok=True)
 
-        # Load preprocessing and spacing from manifest
+        # Load processing and spacing from manifest
         with open(self.dir_labeled / "manifest.json") as file:
             manifest = json.load(file)
-            self.processing = manifest.get("processing")
             self.spacing = manifest.get("spacing")
 
 
@@ -76,6 +67,12 @@ def _generate_training_manifest(
     test_files: list[Path],
 ):
     """Generate training manifest"""
+
+    # Load processing
+    with open(config.dir_labeled / "manifest.json") as file:
+        manifest = json.load(file)
+        processing = manifest.get("processing", [])
+
     training_manifest = {
         "experiment_id": config.model_name,
         "timestamp": timestamp(),
@@ -83,19 +80,11 @@ def _generate_training_manifest(
         "learning_rate": config.learning_rate,
         "batch_size": config.batch_size,
         "n_epochs": config.n_epochs,
-        "processing": config.processing,
+        "processing": processing,
         "spacing": config.spacing,
-        "train_files": [],
-        "test_files": [],
+        "train_files": [str(path) for path in train_files],
+        "test_files": [str(path) for path in test_files],
     }
-
-    for filepath in tqdm(train_files, "Generating train data hashes"):
-        file_info = get_file_info(filepath, config.data_root)
-        training_manifest["train_files"].append(file_info)
-
-    for filepath in tqdm(test_files, "Generating test data hashes"):
-        file_info = get_file_info(filepath, config.data_root)
-        training_manifest["test_files"].append(file_info)
 
     # Save manifest locally and send to WandB
     manifest_path = config.dir_experiment / "training_manifest.json"
@@ -144,22 +133,20 @@ class CellposeLogger:
 
     def _init_wandb(self, config: CellposeFinetuneConfig) -> None:
         """Initialize WandB logging"""
-        wandb.login(key=config.wandb_api_key)
+        wandb_api_key = os.getenv("WANDB_API_KEY")
+        wandb.login(key=wandb_api_key)
 
         wandb.init(
             project=config.wandb_project,
             name=config.model_name,
             dir=config.dir_experiment,
         )
-        wandb.config.update(
-            {
-                "learning_rate": config.learning_rate,
-                "batch_size": config.batch_size,
-                "n_epochs": config.n_epochs,
-                "use_bfloat16": config.use_bfloat16,
-                "spacing": config.spacing,
-            }
-        )
+        wandb.config.update(asdict(config))
+
+        # Save config to dir and upload to wandb
+        config_path = config.dir_experiment / "config.json"
+        config.to_json(config_path)
+        wandb.save(config_path)
 
     def stop(self) -> None:
         """Stop logging and cleanup"""
