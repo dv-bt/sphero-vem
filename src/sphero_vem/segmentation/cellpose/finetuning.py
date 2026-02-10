@@ -47,8 +47,6 @@ class CellposeFinetuneConfig(BaseConfig):
 
         self.model_name = f"cellposeSAM-{self.seg_target}-{timestamp()}"
         self.dir_experiment = Path(f"data/models/cellpose/{self.model_name}")
-        if not self.dry_run:
-            self.dir_experiment.mkdir(parents=True, exist_ok=True)
 
         if self.save_predictions:
             self.dir_predictions = Path(
