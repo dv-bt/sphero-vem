@@ -10,7 +10,7 @@ from sphero_vem.segmentation.cellpose import CellposeFinetuneConfig, finetune_ce
 def main():
     load_dotenv(".env")
     config = CellposeFinetuneConfig(
-        dir_labeled=Path("data/processed/labeled/Au_01-vol_01/labeled-04/50-100-100"),
+        dir_labeled=Path("data/processed/labeled/Au_01-vol_01/labeled-05/100-100-100"),
         seg_target="nuclei",
         batch_size=8,
         learning_rate=5e-5,

@@ -21,12 +21,12 @@ def main():
     seg_params = {
         "cells": {
             "model": "cellposeSAM-cells-20260210_184023",
-            "decompose_flows": False,
-        },
-        "nuclei": {
-            "model": "cellposeSAM-nuclei-20260210_202304",
             "decompose_flows": True,
         },
+        # "nuclei": {
+        #     "model": "cellposeSAM-nuclei-20260210_202304",
+        #     "decompose_flows": True,
+        # },
     }
     spacing_dir = "100-100-100"
 
