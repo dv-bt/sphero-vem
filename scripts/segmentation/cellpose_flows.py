@@ -20,11 +20,11 @@ def main():
     # Set segmentation parameters
     seg_params = {
         "cells": {
-            "model": "cellposeSAM-cells-ds10-20250911_174443",
+            "model": "cellposeSAM-cells-20260210_184023",
             "decompose_flows": False,
         },
         "nuclei": {
-            "model": "cellposeSAM-nuclei-ds10-20250911_181746",
+            "model": "cellposeSAM-nuclei-20260210_202304",
             "decompose_flows": True,
         },
     }

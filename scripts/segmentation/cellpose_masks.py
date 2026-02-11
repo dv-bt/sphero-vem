@@ -4,7 +4,7 @@ Calculate cellpose segmentation masks
 
 from pathlib import Path
 from tqdm import tqdm
-from sphero_vem.segmentation.cellpose import SegmentationMaskParams, calculate_masks
+from sphero_vem.segmentation.cellpose import CellposeMaskConfig, calculate_masks
 
 
 def main() -> None:
@@ -24,7 +24,7 @@ def main() -> None:
     }
 
     for seg_target, params in tqdm(seg_params.items(), "Calculating masks"):
-        config = SegmentationMaskParams(
+        config = CellposeMaskConfig(
             root_path=stack_root, seg_target=seg_target, **params
         )
         calculate_masks(config)
