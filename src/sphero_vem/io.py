@@ -194,7 +194,6 @@ def write_zarr(
     processing: ProcessingStep | list[ProcessingStep] | list[dict] | dict | None = None,
     inputs: list[str] | None = None,
     zarr_chunks: tuple[int] | None = None,
-    multichannel: bool = False,
 ) -> None:
     """Write numpy or dask array to zarr.
 
@@ -231,9 +230,6 @@ def write_zarr(
     zarr_chunks: tuple[int] | None
         Chunks of the saved zarr array. It should have the same length as the array
         dimensions. If None, uses src_array chunks. Default is None.
-    multichannel: bool = False
-        Whether the image is multichannel or not. Image channel should always be the
-        first axis of array. Default is False.
 
     Raises
     ------
@@ -312,16 +308,4 @@ def write_zarr(
     dst_zarr.attrs["processing"] = src_processing + processing
     dst_zarr.attrs["inputs"] = inputs
 
-    # Get parameters for multiscales
-    if array.ndim < 3:
-        spatial_dims = 2
-    elif array.ndim == 3:
-        spatial_dims = 2 if multichannel else 3
-    else:
-        spatial_dims = 3
-
-    create_ome_multiscales(
-        root.get(group_path),
-        spatial_dims=spatial_dims,
-        multichannel=multichannel,
-    )
+    create_ome_multiscales(root.get(group_path))

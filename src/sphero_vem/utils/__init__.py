@@ -20,6 +20,7 @@ from .misc import (
     weighted_std,
     flatten_for_save,
     reconstruct_tuples,
+    repair_multiscales,
 )
 
 from .config import to_serializable, BaseConfig, ProcessingStep
@@ -49,4 +50,5 @@ __all__ = [
     "weighted_std",
     "flatten_for_save",
     "reconstruct_tuples",
+    "repair_multiscales",
 ]

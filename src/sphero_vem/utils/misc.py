@@ -3,6 +3,7 @@ Utility functions
 """
 
 import tempfile
+import warnings
 import shutil
 from pathlib import Path
 from contextlib import contextmanager
@@ -164,51 +165,48 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def create_ome_multiscales(
-    group: zarr.Group,
-    multichannel: bool = False,
-    spatial_dims: int = 3,
-) -> None:
+def create_ome_multiscales(group: zarr.Group | Path) -> None:
     """Create multiscales specifications compliant with OME-NGFF format v0.5.
+
+    Automatically infers multichannel and spatial dimensions from existing arrays.
 
     Parameters
     ----------
-    group : zarr.Group
-        Zarr group that contains the multiscale.
-    multichannel : bool
-        Whether a channel axis should be included. This is expected to be in C(Z)YX
-    spatial_dims : int
-        Number of spatial dimensions. Dimension order should be (Z)YX. Accepted values
-        are 2 or 3.
+    group : zarr.Group | Path
+        Zarr group that contains the multiscale arrays, or path to it.
 
-    Raises
-    ------
-    ValueError
-        If the number of spatial dimensions is not 2 or 3.
-
+    Notes
+    -----
+    - Spatial dimensions inferred from 'spacing' attribute length
+    - Channel dimension assumed if array.ndim > len(spacing)
+    - Axis order is always C(Z)YX
+    - Does nothing if no scale arrays found
     """
+    if isinstance(group, Path):
+        group = zarr.open_group(group, mode="a")
 
+    scales = get_multiscales(group)
+
+    # Early return if no scales present
+    if not scales:
+        return
+
+    # Infer from first array
+    first_array = group[scales[0]["path"]]
+    spatial_dims = len(scales[0]["scale"])  # spacing length
+    multichannel = first_array.ndim > spatial_dims
+
+    # Build spatial axes
     spatial_axes = [
         {"name": "y", "type": "space", "unit": "nanometer"},
         {"name": "x", "type": "space", "unit": "nanometer"},
     ]
     if spatial_dims == 3:
         spatial_axes = [
-            {
-                "name": "z",
-                "type": "space",
-                "unit": "nanometer",
-            }
+            {"name": "z", "type": "space", "unit": "nanometer"}
         ] + spatial_axes
-    elif spatial_dims != 2:
-        raise ValueError(
-            f"Unsupported number of spatial dimensions {spatial_dims}. "
-            "Supported values are 2 (YX) or 3 (ZYX)."
-        )
 
-    scales = get_multiscales(group)
-
-    # Hanlde multichannel
+    # Handle multichannel
     channel_axis = [{"name": "c", "type": "channel"}] if multichannel else []
     channel_scale = [1] if multichannel else []
 
@@ -538,3 +536,42 @@ def reconstruct_tuples(
         df_out[base] = list(zip(*[df[c] for c in col_names]))
 
     return df_out
+
+
+def repair_multiscales(root: Path, start_path: str = "") -> None:
+    """Recursively repair multiscales metadata for all groups in hierarchy.
+
+    Parameters
+    ----------
+    root : Path
+        Path to the Zarr store containing the hierarchy
+    start_path : str, default=""
+        Path to start repair from (empty string for root).
+    """
+
+    # Ignores warnings of non-standard zarr hierarchy components, such as tables.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Object at .* is not recognized as a component of a Zarr hierarchy",
+            category=zarr.errors.ZarrUserWarning,
+        )
+
+        root = zarr.open(root, mode="a")
+        group = root.get(start_path) if start_path else root
+
+        if group is not None:
+            _repair_group_recursive(group)
+
+
+def _repair_group_recursive(group: zarr.Group) -> None:
+    """Recursively repair a group and its children."""
+    # Repair this group if it has multiscales
+    if "multiscales" in group.attrs:
+        create_ome_multiscales(group)
+
+    # Recurse into all subgroups
+    for key in group.group_keys():
+        subgroup = group.get(key)
+        if subgroup is not None and isinstance(subgroup, zarr.Group):
+            _repair_group_recursive(subgroup)

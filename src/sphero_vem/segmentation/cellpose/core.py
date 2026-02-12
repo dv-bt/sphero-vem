@@ -139,10 +139,15 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     vprint("Saving flows", config.verbose)
     save_root = zarr.open_group(config.out_path, mode="a")
 
+    # Delete old segmentation target group to avoid potential issues withs stale data
+    target_group = f"labels/{config.seg_target}"
+    if save_root.get(target_group) is not None:
+        del save_root[target_group]
+
     write_zarr(
         save_root,
         cellprob,
-        f"labels/{config.seg_target}/flows/cellprob/{config.spacing_dir}",
+        f"{target_group}/flows/cellprob/{config.spacing_dir}",
         src_zarr=config.src_zarr,
         processing=processing,
         zarr_chunks=config.zarr_chunks,
@@ -152,12 +157,11 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     write_zarr(
         save_root,
         dP,
-        f"labels/{config.seg_target}/flows/dP/{config.spacing_dir}",
+        f"{target_group}/flows/dP/{config.spacing_dir}",
         src_zarr=config.src_zarr,
         processing=processing,
         zarr_chunks=(3, *config.zarr_chunks),
         dtype="f2",
-        multichannel=True,
     )
 
 
