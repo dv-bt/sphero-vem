@@ -62,3 +62,61 @@ def median_filter(array: ArrayLike, size: int = 3) -> np.ndarray:
     """
     cellprob_smoothed = ndi.median_filter(array, size=size, mode="nearest")
     return cellprob_smoothed
+
+
+@gpu_dispatch(return_to_host=True)
+def guided_filter(
+    array: ArrayLike,
+    guide: ArrayLike,
+    radius: int,
+    eps: float,
+) -> np.ndarray:
+    """Apply a guided filter using a guide image to smooth an input image.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Input image to be filtered. It should have the same shape as guide.
+    guide : np.ndarray
+        Guide image. Edges in this image are preserved in the output.
+        Should be normalised to [0, 1].
+    radius : int
+        Half-size of the local window. Window size is (2*radius+1)^2.
+    eps : float
+        Regularisation parameter. Larger values give more smoothing, smaller values
+        make the filter more edge-preserving.
+
+    Returns
+    -------
+    np.ndarray
+        Filtered image of same shape as inp.
+
+    References
+    ----------
+    .. 1. He, K., Sun, J. & Tang, X. Guided Image Filtering.
+       IEEE Transactions on Pattern Analysis and Machine Intelligence 35, 1397-1409 (2013).
+       https://doi.org/10.1109/TPAMI.2012.213.
+
+    """
+
+    def box(x: ArrayLike) -> ArrayLike:
+        return ndi.uniform_filter(x.astype(xp.float32), size=2 * radius + 1)
+
+    mean_G = box(guide)
+    mean_P = box(array)
+    mean_GP = box(guide * array)
+    mean_GG = box(guide * guide)
+
+    cov_GP = mean_GP - mean_G * mean_P
+    del mean_GP
+
+    var_G = mean_GG - mean_G * mean_G
+    del mean_GG
+
+    a = cov_GP / (var_G + eps)
+    del cov_GP, var_G
+
+    b = mean_P - a * mean_G
+    del mean_P, mean_G
+
+    return box(a) * guide + box(b)

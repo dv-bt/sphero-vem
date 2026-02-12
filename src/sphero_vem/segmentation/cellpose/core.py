@@ -13,7 +13,7 @@ import zarr
 from sphero_vem.io import write_zarr
 from sphero_vem.utils import vprint
 from sphero_vem.segmentation.cellpose.postptocessing import merge_labels, decompose_flow
-from sphero_vem.postprocessing import median_filter
+from sphero_vem.postprocessing import median_filter, guided_filter
 
 
 @dataclass
@@ -33,6 +33,9 @@ class CellposeFlowConfig:
     median_filter_cellprob: int | None = 3
     decompose_flows: bool = False
     decompose_flows_pad_fraction: float = 0.3
+    guided_filter_cellprob: bool = True
+    guided_filter_radius: int = 8
+    guided_filter_eps: float = 1e-2
 
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
@@ -128,12 +131,22 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     dP = np.ascontiguousarray(flows[1]).astype(np.float16, copy=False)
     cellprob = np.ascontiguousarray(flows[2]).astype(np.float16, copy=False)
 
+    if config.median_filter_cellprob:
+        cellprob = median_filter(cellprob, config.median_filter_cellprob)
+
+    # Guided filter should be done using the raw dP.
+    if config.guided_filter_cellprob:
+        cellprob = guided_filter(
+            cellprob,
+            guide=dP / dP.max(),
+            radius=config.guided_filter_radius,
+            eps=config.guided_filter_eps,
+        )
+
     if config.decompose_flows:
         dP = decompose_flow(
             dP, config.decompose_flows_pad_fraction, torch.device("cuda")
         )
-    if config.median_filter_cellprob:
-        cellprob = median_filter(cellprob, config.median_filter_cellprob)
 
     # Saving flows
     vprint("Saving flows", config.verbose)

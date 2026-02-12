@@ -41,6 +41,7 @@ def main():
             decompose_flows=params["decompose_flows"],
             tile_overlap=0.1,
             batch_size=64,
+            guided_filter_cellprob=True,
         )
         calculate_flows(config)
         torch.cuda.empty_cache()
