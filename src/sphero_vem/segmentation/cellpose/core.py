@@ -136,9 +136,10 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
 
     # Guided filter should be done using the raw dP.
     if config.guided_filter_cellprob:
+        dP_mag = np.sqrt(np.sum(dP**2, axis=0))
         cellprob = guided_filter(
             cellprob,
-            guide=dP / dP.max(),
+            guide=dP_mag / dP_mag.max(),
             radius=config.guided_filter_radius,
             eps=config.guided_filter_eps,
         )
@@ -155,7 +156,7 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     # Delete old segmentation target group to avoid potential issues withs stale data
     target_group = f"labels/{config.seg_target}"
     if save_root.get(target_group) is not None:
-        del save_root[target_group]
+        save_root.__delitem__(target_group)
 
     write_zarr(
         save_root,
