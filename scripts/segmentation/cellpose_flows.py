@@ -5,6 +5,7 @@ Segment a volume stack using cellpose
 import shutil
 from pathlib import Path
 import zarr
+import torch
 from sphero_vem.segmentation.cellpose import CellposeFlowConfig, calculate_flows
 
 
@@ -42,6 +43,7 @@ def main():
             batch_size=64,
         )
         calculate_flows(config)
+        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":
