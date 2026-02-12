@@ -20,13 +20,13 @@ def main():
     # Set segmentation parameters
     seg_params = {
         "cells": {
-            "model": "cellposeSAM-cells-20260210_184023",
+            "model": "cellposeSAM-cells-20260211_171241",
+            "decompose_flows": False,
+        },
+        "nuclei": {
+            "model": "cellposeSAM-nuclei-20260211_170320",
             "decompose_flows": True,
         },
-        # "nuclei": {
-        #     "model": "cellposeSAM-nuclei-20260210_202304",
-        #     "decompose_flows": True,
-        # },
     }
     spacing_dir = "100-100-100"
 
@@ -38,6 +38,8 @@ def main():
             model=params["model"],
             spacing_dir=spacing_dir,
             decompose_flows=params["decompose_flows"],
+            tile_overlap=0.1,
+            batch_size=64,
         )
         calculate_flows(config)
 
