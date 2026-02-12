@@ -313,3 +313,47 @@ def rechunk_array(
     if delete_src:
         del root[src_array_path]
     return dst_zarr
+
+
+def crop_to_valid(
+    data: np.ndarray, mode: Literal["nonzero", "notnan"] = "nonzero"
+) -> np.ndarray:
+    """
+    Crop a 3D array to the bounding box of valid data.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        The 3D input array.
+    mode : Literal["nonzero", "notnan"], optional
+        The validity criteria: "nonzero" (default) or "notnan".
+
+    Returns
+    -------
+    np.ndarray
+        The cropped array.
+
+    Raises
+    ------
+    ValueError
+        If mode is not a valid value.
+    """
+    if mode == "notnan":
+        mask = ~np.isnan(data)
+    elif mode == "nonzero":
+        mask = data != 0
+    else:
+        raise ValueError(
+            f"Mode {mode} not recognized. Valid options are 'nonzero' and 'notnan'"
+        )
+
+    coords = np.argwhere(mask)
+
+    if coords.size == 0:
+        return data
+
+    start = coords.min(axis=0)
+    stop = coords.max(axis=0) + 1
+    slicer = tuple(slice(s, e) for s, e in zip(start, stop))
+
+    return data[slicer]
