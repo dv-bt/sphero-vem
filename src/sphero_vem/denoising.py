@@ -3,6 +3,7 @@ Functions for denoising images, based on Careamics.
 """
 
 from pathlib import Path
+from typing import Literal
 from dataclasses import dataclass, field
 from tqdm import tqdm
 import numpy as np
@@ -170,8 +171,33 @@ def denoise_image(
     tile_overlap: tuple[int, ...],
     batch_size: int,
     num_workers: int,
+    rescale: bool = False,
 ) -> np.ndarray:
-    """Denoise a single YX image"""
+    """Denoise a single YX image.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        2D image to denoise (YX).
+    careamist : CAREamist
+        Trained CAREamist model.
+    tile_size : tuple[int, ...]
+        Tile size for prediction.
+    tile_overlap : tuple[int, ...]
+        Overlap between tiles.
+    batch_size : int
+        Number of tiles to process in parallel.
+    num_workers : int
+        Number of dataloader workers.
+    rescale : bool
+        If True, rescale denoised output to uint8 [0, 255] using min/max.
+        Default is False.
+
+    Returns
+    -------
+    np.ndarray
+        Denoised image. If rescale=True, returns uint8, otherwise float32.
+    """
     with suppress_logging():
         denoised = careamist.predict(
             source=image,
@@ -181,6 +207,16 @@ def denoise_image(
             batch_size=batch_size,
             dataloader_params={"num_workers": num_workers},
         )[0]
+
+    if rescale:
+        img_min = denoised.min()
+        img_max = denoised.max()
+        denoised = (
+            ((denoised - img_min) / (img_max - img_min) * 255)
+            .clip(0, 255)
+            .astype(np.uint8)
+        )
+
     return denoised
 
 
@@ -195,13 +231,13 @@ def denoise_stack(
     batch_size: int = 64,
     num_workers: int = 16,
     temp_dir: Path | str | None = Path("data/tmp"),
+    rescale_mode: Literal["per_slice", "global"] = "per_slice",
 ) -> None:
     """Denoise volume with Noise2Void and rescale to uint8.
 
-    Performs two-pass processing: first denoises all slices while accumulating
-    global intensity statistics, then rescales to uint8 using the global min/max.
-    Uses a temporary zarr for intermediate float32 storage, which is automatically
-    cleaned up after processing.
+    Performs denoising with either global or per-slice intensity rescaling.
+    Global rescaling uses two-pass processing with a temporary zarr. Per-slice
+    rescaling processes each slice independently without intermediate storage.
 
     Parameters
     ----------
@@ -232,26 +268,75 @@ def denoise_stack(
         Number of dataloader workers for tile loading.
         Default is 16.
     temp_dir : Path | str | None
-        Directory for intermediate float32 zarr storage. Should be on fast
-        local storage (SSD) as it will hold the full denoised volume
-        temporarily. Default is Path("data/tmp").
+        Directory for intermediate float32 zarr storage. Only used when
+        `rescale_mode='global'`. Should be on fast local storage (SSD).
+        Default is Path("data/tmp").
+    rescale_mode : Literal["per_slice", "global"]
+        If `'global'`, use global min/max across all slices for rescaling (two-pass).
+        If `'per_slice'`, rescale each slice independently using per-slice min/max.
+        Default is True.
 
     Notes
     -----
-    The intermediate zarr is uncompressed for speed and can be large
-    (4 bytes per voxel). Ensure sufficient disk space in `temp_dir`.
+    When `rescale_mode='global'`, the intermediate zarr is uncompressed and
+    can be large (4 bytes per voxel). Ensure sufficient disk space in `temp_dir`.
     """
-
-    # Make use of tensor cores
     torch.set_float32_matmul_precision("high")
-
-    stats = IntermediateStats()
 
     root = zarr.open_group(root_path, mode="a")
     src_zarr = root.get(src_path)
 
     config = DenoisingConfig.from_json(model_root / f"{model_name}/config.json")
     careamist = _load_model(model_name=model_name, model_root=model_root)
+
+    dst_path = f"{dst_group}/{dirname_from_spacing(src_zarr.attrs['spacing'])}"
+
+    if rescale_mode == "global":
+        _denoise_global_rescale(
+            src_zarr=src_zarr,
+            careamist=careamist,
+            root=root,
+            dst_path=dst_path,
+            config=config,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            temp_dir=temp_dir,
+        )
+    elif rescale_mode == "per_slice":
+        _denoise_per_slice_rescale(
+            src_zarr=src_zarr,
+            careamist=careamist,
+            root=root,
+            dst_path=dst_path,
+            config=config,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+    else:
+        raise ValueError(
+            f"Invalid value {rescale_mode} for rescale_mode. "
+            "Valid options are 'global' and 'per_slice'."
+        )
+
+
+def _denoise_global_rescale(
+    src_zarr,
+    careamist,
+    root,
+    dst_path: str,
+    config,
+    tile_size: tuple[int, int],
+    tile_overlap: tuple[int, int],
+    batch_size: int,
+    num_workers: int,
+    temp_dir: Path | str | None,
+) -> None:
+    """Two-pass denoising with global rescaling."""
+    stats = IntermediateStats()
 
     with temporary_zarr(
         shape=src_zarr.shape,
@@ -293,6 +378,7 @@ def denoise_stack(
                     "tile_overlap": tile_overlap,
                     "global_min": stats.global_min,
                     "global_max": stats.global_max,
+                    "rescale_mode": "global",
                 },
             ),
         ]
@@ -300,8 +386,62 @@ def denoise_stack(
         write_zarr(
             root=root,
             array=rescaled,
-            dst_path=f"{dst_group}/{dirname_from_spacing(src_zarr.attrs['spacing'])}",
+            dst_path=dst_path,
             src_zarr=src_zarr,
             dtype=np.uint8,
             processing=processing,
         )
+
+
+def _denoise_per_slice_rescale(
+    src_zarr,
+    careamist,
+    root,
+    dst_path: str,
+    config,
+    tile_size: tuple[int, int],
+    tile_overlap: tuple[int, int],
+    batch_size: int,
+    num_workers: int,
+) -> None:
+    """Single-pass denoising with per-slice rescaling."""
+
+    # Create dask array from source
+    src_dask = da.from_zarr(src_zarr)
+
+    # Apply denoising and rescaling per slice along Z axis
+    rescaled = da.map_blocks(
+        lambda img: denoise_image(
+            img,
+            careamist,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            rescale=True,
+        ),
+        src_dask,
+        chunks=(1, *src_zarr.shape[1:]),
+        dtype=np.uint8,
+    )
+
+    processing = [
+        ProcessingStep.from_config("denosing-train", config),
+        ProcessingStep.manual(
+            "denoising-predict",
+            {
+                "tile_size": tile_size,
+                "tile_overlap": tile_overlap,
+                "rescale_mode": "per_slice",
+            },
+        ),
+    ]
+
+    write_zarr(
+        root=root,
+        array=rescaled,
+        dst_path=dst_path,
+        src_zarr=src_zarr,
+        dtype=np.uint8,
+        processing=processing,
+    )
