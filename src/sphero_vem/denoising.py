@@ -274,7 +274,7 @@ def denoise_stack(
     rescale_mode : Literal["per_slice", "global"]
         If `'global'`, use global min/max across all slices for rescaling (two-pass).
         If `'per_slice'`, rescale each slice independently using per-slice min/max.
-        Default is True.
+        Default is `'per_slice'`.
 
     Notes
     -----

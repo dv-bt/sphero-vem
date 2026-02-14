@@ -11,8 +11,6 @@ __version__ = "0.1.0"
 # Core I/O operations
 from .io import (
     write_image,
-    read_stack,
-    write_stack,
     read_tensor,
     stack_to_zarr,
     write_zarr,
@@ -20,10 +18,7 @@ from .io import (
 
 # Preprocessing
 from .preprocessing import (
-    downscale_image,
-    downscale_labels,
     downscale_tensor,
-    Normalize,
 )
 
 # Registration
@@ -75,16 +70,11 @@ __all__ = [
     "__version__",
     # I/O
     "write_image",
-    "read_stack",
-    "write_stack",
     "read_tensor",
     "stack_to_zarr",
     "write_zarr",
     # Preprocessing
-    "downscale_image",
-    "downscale_labels",
     "downscale_tensor",
-    "Normalize",
     # Registration
     "RegistrationConfig",
     "register_image_pair",
