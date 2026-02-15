@@ -43,6 +43,7 @@ def main():
             batch_size=64,
             guided_filter_cellprob=True,
             guided_filter_eps=0.001,
+            save_raw_flows=True,
         )
         calculate_flows(config)
         torch.cuda.empty_cache()

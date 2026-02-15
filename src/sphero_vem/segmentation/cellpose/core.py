@@ -31,6 +31,7 @@ class CellposeFlowConfig(BaseConfig):
             "model_dir",
             "spacing",
             "src_zarr",
+            "save_raw_flows",
         ]
     )
 
@@ -50,6 +51,7 @@ class CellposeFlowConfig(BaseConfig):
     guided_filter_cellprob: bool = True
     guided_filter_radius: int = 8
     guided_filter_eps: float = 1e-2
+    save_raw_flows: bool = False
 
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
@@ -134,6 +136,37 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     del flows
     torch.cuda.empty_cache()
 
+    save_root = zarr.open_group(config.out_path, mode="a")
+
+    # Delete old segmentation target group to avoid potential issues withs stale data
+    target_group = f"labels/{config.seg_target}"
+    if save_root.get(target_group) is not None:
+        save_root.__delitem__(target_group)
+
+    processing = ProcessingStep.from_config("segmentation", config)
+
+    if config.save_raw_flows:
+        vprint("Saving raw flows", config.verbose)
+        write_zarr(
+            save_root,
+            cellprob,
+            f"{target_group}/flows/cellprob-raw/{config.spacing_dir}",
+            src_zarr=config.src_zarr,
+            processing=processing,
+            zarr_chunks=config.zarr_chunks,
+            dtype="f2",
+        )
+
+        write_zarr(
+            save_root,
+            dP,
+            f"{target_group}/flows/dP-raw/{config.spacing_dir}",
+            src_zarr=config.src_zarr,
+            processing=processing,
+            zarr_chunks=(3, *config.zarr_chunks),
+            dtype="f2",
+        )
+
     if config.median_filter_cellprob:
         cellprob = median_filter(cellprob, config.median_filter_cellprob)
 
@@ -152,16 +185,8 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
             dP, config.decompose_flows_pad_fraction, torch.device("cuda")
         )
 
-    # Saving flows
-    vprint("Saving flows", config.verbose)
-    save_root = zarr.open_group(config.out_path, mode="a")
-
-    # Delete old segmentation target group to avoid potential issues withs stale data
-    target_group = f"labels/{config.seg_target}"
-    if save_root.get(target_group) is not None:
-        save_root.__delitem__(target_group)
-
-    processing = ProcessingStep.from_config("segmentation", config)
+    # Saving processed flows
+    vprint("Saving processed flows", config.verbose)
 
     write_zarr(
         save_root,
