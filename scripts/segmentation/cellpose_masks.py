@@ -25,7 +25,7 @@ def main() -> None:
 
     for seg_target, params in tqdm(seg_params.items(), "Calculating masks"):
         config = CellposeMaskConfig(
-            root_path=stack_root, seg_target=seg_target, **params
+            root_path=stack_root, seg_target=seg_target, merge_masks=False, **params
         )
         calculate_masks(config)
 

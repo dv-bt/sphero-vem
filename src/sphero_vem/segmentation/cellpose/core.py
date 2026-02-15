@@ -85,9 +85,41 @@ class CellposeFlowConfig(BaseConfig):
             self.zarr_chunks = self.src_zarr.chunks
 
 
-def calculate_flows(config: CellposeFlowConfig) -> None:
-    """Segment volume stack using config as input. This function calculates flows and
-    cell probability, masks have to be calculated in a following step."""
+def compute_raw_flows(config: CellposeFlowConfig) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute raw cellpose flows without postprocessing.
+
+    This function performs model inference only, returning the raw displacement
+    field and cell probability. No postprocessing, filtering, or saving is performed.
+
+    Parameters
+    ----------
+    config : CellposeFlowConfig
+        Configuration containing model parameters, image source, and inference settings.
+        Only the following fields are used:
+        - src_zarr: Source image array
+        - model, model_dir: Model specification
+        - batch_size, tile_overlap, flow3D_smooth, augment: Inference parameters
+        - verbose: Logging control
+
+    Returns
+    -------
+    dP : np.ndarray
+        Displacement field with shape (3, Z, Y, X) in float16.
+    cellprob : np.ndarray
+        Cell probability logits with shape (Z, Y, X) in float16.
+
+    Notes
+    -----
+    - GPU memory is explicitly freed after inference
+    - Arrays are returned in float16 for memory efficiency
+    - This function does not modify any files or zarr stores
+
+    See Also
+    --------
+    postprocess_flows : For postprocessing raw flows
+    calculate_flows : For complete flow calculation including postprocessing
+    """
 
     image: np.ndarray = config.src_zarr[:]
     pretrained_model = "cpsam" if config.model == "cpsam" else config.model_dir
@@ -126,9 +158,6 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     vprint(f"Completed segmentation at {time_finish}", config.verbose)
     vprint(f"Elapsed time: {time_finish - time_start}", config.verbose)
 
-    # Post process flows
-    vprint("Starting flow postprocessing", config.verbose)
-
     dP = np.ascontiguousarray(flows[1]).astype(np.float16, copy=False)
     cellprob = np.ascontiguousarray(flows[2]).astype(np.float16, copy=False)
 
@@ -136,13 +165,82 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     del flows
     torch.cuda.empty_cache()
 
-    save_root = zarr.open_group(config.out_path, mode="a")
+    return dP, cellprob
 
-    # Delete old segmentation target group to avoid potential issues withs stale data
+
+def postprocess_flows(
+    config: CellposeFlowConfig,
+    dP: np.ndarray,
+    cellprob: np.ndarray,
+    save_root: zarr.Group | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Postprocess raw cellpose flows and save to zarr.
+
+    This function applies optional filtering and decomposition steps to raw flows,
+    then saves both raw (if requested) and processed flows to zarr. This function
+    is intended for debugging and iterative development of postprocessing pipelines.
+
+    Parameters
+    ----------
+    config : CellposeFlowConfig
+        Configuration containing postprocessing parameters and save paths.
+        Relevant fields:
+        - out_path: Destination zarr store path
+        - seg_target: Target label group name
+        - spacing_dir: Spacing directory name
+        - save_raw_flows: Whether to save unprocessed flows
+        - median_filter_cellprob: Median filter size (or None)
+        - guided_filter_cellprob: Whether to apply guided filter
+        - guided_filter_radius, guided_filter_eps: Guided filter parameters
+        - decompose_flows: Whether to decompose flows via Helmholtz-Hodge
+        - decompose_flows_pad_fraction: Padding for flow decomposition
+        - zarr_chunks: Chunk size for zarr arrays
+        - verbose: Logging control
+    dP : np.ndarray
+        Raw displacement field with shape (3, Z, Y, X).
+    cellprob : np.ndarray
+        Raw cell probability logits with shape (Z, Y, X).
+    save_root : zarr.Group | None, optional
+        Pre-opened zarr group for saving. If None, opens config.out_path.
+        This allows external control over zarr cleanup operations.
+
+    Returns
+    -------
+    dP_processed : np.ndarray
+        Processed displacement field (after optional decomposition).
+    cellprob_processed : np.ndarray
+        Processed cell probability (after optional filtering).
+
+    Notes
+    -----
+    - Does NOT perform zarr group cleanup (caller's responsibility)
+    - Suitable for iterative debugging of postprocessing parameters
+    - GPU operations (decompose_flow) clean up their own memory
+    - All arrays are saved as float16 for storage efficiency
+
+    See Also
+    --------
+    compute_raw_flows : For raw flow computation
+    calculate_flows : For complete flow calculation including zarr cleanup
+    """
+
+    # Input validation
+    if dP.shape[0] != 3:
+        raise ValueError(f"dP must have shape (3, Z, Y, X), got {dP.shape}")
+    if dP.shape[1:] != cellprob.shape:
+        raise ValueError(
+            f"dP and cellprob spatial dimensions must match. "
+            f"Got dP shape {dP.shape} and cellprob shape {cellprob.shape}"
+        )
+
+    vprint("Starting flow postprocessing", config.verbose)
+
+    # Open zarr if not provided
+    if save_root is None:
+        save_root = zarr.open_group(config.out_path, mode="a")
+
     target_group = f"labels/{config.seg_target}"
-    if save_root.get(target_group) is not None:
-        save_root.__delitem__(target_group)
-
     processing = ProcessingStep.from_config("segmentation", config)
 
     if config.save_raw_flows:
@@ -207,6 +305,47 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
         zarr_chunks=(3, *config.zarr_chunks),
         dtype="f2",
     )
+
+    return dP, cellprob
+
+
+def calculate_flows(config: CellposeFlowConfig) -> None:
+    """
+    Segment volume stack using cellpose: compute flows and postprocess.
+
+    This is the main entry point for cellpose flow calculation. It performs model
+    inference, postprocessing, and saving in a single call. For debugging or
+    iterative development, use compute_raw_flows() and postprocess_flows() separately.
+
+    Parameters
+    ----------
+    config : CellposeFlowConfig
+        Complete configuration for flow calculation and postprocessing.
+
+    Notes
+    -----
+    - Deletes existing labels/{seg_target} group to ensure clean state
+    - Calls compute_raw_flows() followed by postprocess_flows()
+    - Maintains backward compatibility with existing scripts
+
+    See Also
+    --------
+    compute_raw_flows : For inference-only workflow
+    postprocess_flows : For postprocessing pre-computed flows
+    calculate_masks : For generating masks from processed flows
+    """
+
+    # Step 1: Compute raw flows
+    dP, cellprob = compute_raw_flows(config)
+
+    # Step 2: Prepare zarr (cleanup existing group)
+    save_root = zarr.open_group(config.out_path, mode="a")
+    target_group = f"labels/{config.seg_target}"
+    if save_root.get(target_group) is not None:
+        save_root.__delitem__(target_group)
+
+    # Step 3: Postprocess and save
+    postprocess_flows(config, dP, cellprob, save_root=save_root)
 
 
 @dataclass
