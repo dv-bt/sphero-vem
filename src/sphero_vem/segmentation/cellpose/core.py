@@ -12,13 +12,27 @@ import numpy as np
 import zarr
 from sphero_vem.io import write_zarr
 from sphero_vem.utils import vprint
+from sphero_vem.utils.config import BaseConfig, ProcessingStep
 from sphero_vem.segmentation.cellpose.postptocessing import merge_labels, decompose_flow
 from sphero_vem.postprocessing import median_filter, guided_filter
 
 
 @dataclass
-class CellposeFlowConfig:
+class CellposeFlowConfig(BaseConfig):
     """Segment a volume stack using cellpose"""
+
+    EXCLUDED_PROCESSING_FIELDS = set(
+        [
+            "root_path",
+            "spacing_dir",
+            "out_path",
+            "verbose",
+            "zarr_chunks",
+            "model_dir",
+            "spacing",
+            "src_zarr",
+        ]
+    )
 
     root_path: Path
     model: str
@@ -73,21 +87,6 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     """Segment volume stack using config as input. This function calculates flows and
     cell probability, masks have to be calculated in a following step."""
 
-    processing = [
-        {
-            "step": "segmentation",
-            "model": config.model,
-            "seg_target": config.seg_target,
-            "batch_size": config.batch_size,
-            "flow3D_smooth": config.flow3D_smooth,
-            "augment": config.augment,
-            "tile_overlap": config.tile_overlap,
-            "median_filter_cellprob": config.median_filter_cellprob,
-            "decompose_flows": config.decompose_flows,
-            "decompose_flows_pad_fraction": config.decompose_flows_pad_fraction,
-        }
-    ]
-
     image: np.ndarray = config.src_zarr[:]
     pretrained_model = "cpsam" if config.model == "cpsam" else config.model_dir
     cellpose_model = models.CellposeModel(gpu=True, pretrained_model=pretrained_model)
@@ -131,6 +130,10 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     dP = np.ascontiguousarray(flows[1]).astype(np.float16, copy=False)
     cellprob = np.ascontiguousarray(flows[2]).astype(np.float16, copy=False)
 
+    # Free the flows tuple to release any GPU references
+    del flows
+    torch.cuda.empty_cache()
+
     if config.median_filter_cellprob:
         cellprob = median_filter(cellprob, config.median_filter_cellprob)
 
@@ -157,6 +160,8 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
     target_group = f"labels/{config.seg_target}"
     if save_root.get(target_group) is not None:
         save_root.__delitem__(target_group)
+
+    processing = ProcessingStep.from_config("segmentation", config)
 
     write_zarr(
         save_root,

@@ -42,6 +42,7 @@ def main():
             tile_overlap=0.3,
             batch_size=64,
             guided_filter_cellprob=True,
+            guided_filter_eps=0.001,
         )
         calculate_flows(config)
         torch.cuda.empty_cache()

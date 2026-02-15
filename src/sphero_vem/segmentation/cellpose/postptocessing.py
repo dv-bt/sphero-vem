@@ -239,11 +239,20 @@ def decompose_flow(
     np.ndarray
         The curl-free component of the flows. This is returned in np.float32.
     """
-    dP = torch.from_numpy(dP).to(device=device, dtype=torch.float32)
-    z_padding = int(dP.shape[1] * z_pad_fraction)
+    dP_tensor = torch.from_numpy(dP).to(device=device, dtype=torch.float32)
+    z_padding = int(dP_tensor.shape[1] * z_pad_fraction)
 
     cf_component = _get_curl_free_component(
-        input=dP,
+        input=dP_tensor,
         z_padding=z_padding,
     )
-    return cf_component.cpu().numpy()
+
+    # Move result to CPU and convert to numpy
+    result = cf_component.cpu().numpy()
+
+    # Explicitly free GPU memory
+    del dP_tensor, cf_component
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    return result

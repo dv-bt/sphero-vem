@@ -126,7 +126,13 @@ def gpu_dispatch(
             out = func(*args, **kwargs)
 
             if use_gpu and host_flag:
-                return _map_arrays(out, to_host)
+                result = _map_arrays(out, to_host)
+                # Free GPU memory pool when returning to host
+                # This ensures GPU arrays created during computation are released
+                if cp is not None:
+                    mempool = cp.get_default_memory_pool()
+                    mempool.free_all_blocks()
+                return result
             return out
 
         return wrapper
