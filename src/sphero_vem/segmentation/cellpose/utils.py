@@ -10,6 +10,7 @@ from cellpose import metrics
 import zarr
 from skimage import graph
 from sphero_vem.io import write_zarr
+from sphero_vem.preprocessing import resample_array
 from sphero_vem.utils import dirname_from_spacing
 from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_host
 
@@ -92,16 +93,34 @@ def upsample_masks(
     erosion_iterations: int = 2,
     cellprob_threshold: float = 0.0,
     store_chunks: tuple[int] | None = None,
+    label_root: str | None = None,
+    n_workers: int = 4,
 ) -> None:
     """Upsample cellpose labels"""
 
     root = zarr.open_group(root_path, mode="a")
+    label_path = (
+        f"{label_root}/labels/{seg_target}"
+        if label_root is not None
+        else f"labels/{seg_target}"
+    )
     labels_lr_zarr: zarr.Array = root.get(
-        f"labels/{seg_target}/masks/{dirname_from_spacing(src_spacing)}"
+        f"{label_path}/masks/{dirname_from_spacing(src_spacing)}"
     )
-    cellprob_hr_zarr: zarr.Array = root.get(
-        f"labels/{seg_target}/flows/cellprob/{dirname_from_spacing(target_spacing)}"
+
+    # Try to load high resolution cellprob, and calculate it if it doesn't exit
+    cellprob_hr_path = (
+        f"{label_path}/flows/cellprob/{dirname_from_spacing(target_spacing)}"
     )
+    cellprob_hr_zarr: zarr.Array = root.get(cellprob_hr_path)
+    if cellprob_hr_zarr is None:
+        resample_array(
+            zarr_path=root_path,
+            array_path=f"{label_path}/flows/cellprob/{dirname_from_spacing(src_spacing)}",
+            target_spacing=target_spacing,
+            n_workers=n_workers,
+        )
+        cellprob_hr_zarr: zarr.Array = root.get(cellprob_hr_path)
 
     labels_lr: np.ndarray = labels_lr_zarr[:]
     cellprob_hr: np.ndarray = cellprob_hr_zarr[:]
@@ -123,7 +142,7 @@ def upsample_masks(
     write_zarr(
         root,
         labels_hr,
-        f"labels/{seg_target}/masks/{dirname_from_spacing(target_spacing)}",
+        f"{label_path}/masks/{dirname_from_spacing(target_spacing)}",
         src_zarr=labels_lr_zarr,
         spacing=target_spacing,
         processing=processing,
