@@ -2,6 +2,7 @@
 Various functions used for postprocessing cellpose flows and masks
 """
 
+import networkx as nx
 import numpy as np
 from skimage import graph
 import torch
@@ -11,6 +12,39 @@ from sphero_vem.segmentation.cellpose.utils import (
     build_rag,
     calc_surface_rag,
 )
+
+
+def _merge_by_threshold(
+    labels: np.ndarray,
+    rag: graph.RAG,
+    weight_thresh: float,
+    rel_contact_thresh: float,
+) -> np.ndarray:
+    """Merge RAG nodes connected by edges that pass both threshold checks.
+
+    An edge is kept (allows merging) when ALL conditions are met:
+    - Neither node is background (label 0)
+    - Relative contact area >= rel_contact_thresh
+    - Edge weight <= weight_thresh
+    """
+    rag_cut = rag.copy()
+    to_remove = [
+        (u, v)
+        for u, v, d in rag_cut.edges(data=True)
+        if u == 0
+        or v == 0
+        or d["rel_contact_max"] < rel_contact_thresh
+        or d["weight"] > weight_thresh
+    ]
+    rag_cut.remove_edges_from(to_remove)
+
+    map_array = np.arange(labels.max() + 1, dtype=labels.dtype)
+    for i, nodes in enumerate(nx.connected_components(rag_cut)):
+        for node in nodes:
+            for label in rag_cut.nodes[node]["labels"]:
+                map_array[label] = i
+
+    return map_array[labels]
 
 
 def merge_labels(
@@ -44,13 +78,13 @@ def merge_labels(
         used for building the RAG. If provided, `image` is ignored.
     rel_contact_thresh : float, optional
         Minimum relative contact area (fraction of region perimeter in contact with
-        a neighbor) required for an edge to be considered mergeable. Edges with
-        maximal relative contact < this threshold will have their 'weight' set to
-        1.0 to discourage merging. Default is 0.1.
+        a neighbor) required for an edge to be considered mergeable. Edges whose
+        maximal relative contact is below this value are excluded from merging.
+        Default is 0.1.
     weight_thresh : float, optional
-        Threshold applied to the RAG by `graph.cut_threshold` to perform merging.
-        Edges with weight (or other computed metric) below this threshold will be
-        merged. Weight is calculated as (1 - cellprob) + edge_map. Default is 0.15.
+        Maximum edge weight for merging. Edges with weight at or below this
+        threshold will be merged. Weight is calculated as
+        (1 - cellprob) + edge_map. Default is 0.15.
     sigma : int, optional
         Standard deviation for the Gaussian kernel used when computing the image
         gradient magnitude if `edge_map` is not provided. Default is 1.
@@ -93,18 +127,7 @@ def merge_labels(
         rel_v = _rel_contact(v, d)
         d["rel_contact_max"] = max(rel_u, rel_v)
 
-    # Make edge unmergeable if the contact area is below the threshold, then optionally
-    # consider only edges that connect to at least a node with a sphericity lower than
-    # the set threshold.
-    # Edges with the background node are also set to unmergeable.
-    rag_th = rag.copy()
-    for u, v, d in rag_th.edges(data=True):
-        if (u == 0) or (v == 0):
-            d["weight"] = 1.0
-        elif d["rel_contact_max"] < rel_contact_thresh:
-            d["weight"] = 1.0
-
-    merged = graph.cut_threshold(labels.copy(), rag_th, weight_thresh, in_place=False)
+    merged = _merge_by_threshold(labels, rag, weight_thresh, rel_contact_thresh)
 
     return merged, rag
 
