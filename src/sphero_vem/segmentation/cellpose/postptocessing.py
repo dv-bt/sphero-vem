@@ -61,8 +61,10 @@ def merge_labels(
 
     This function constructs a region adjacency graph (RAG) from an integer-labeled
     segmentation and an edge strength map, annotates edges with the relative contact
-    area between regions, preventing merging for small contacts, and then
-    performs a threshold-based region merging.
+    area between regions, and performs threshold-based region merging. Merging is
+    applied iteratively: after each round the RAG is rebuilt from the updated labels
+    so that newly eligible merges (e.g. due to increased contact area) are captured.
+    The process stops when no further merges occur.
 
     Parameters
     ----------
@@ -95,7 +97,7 @@ def merge_labels(
         Label image after region merging. Same shape as `labels`. Label values may
         be relabeled by the merging procedure.
     rag : graph.RAG
-        The region adjacency graph built from the original inputs
+        The region adjacency graph from the final iteration (stable state).
 
     Raises
     ------
@@ -112,22 +114,25 @@ def merge_labels(
             )
         edge_map = gaussian_edge_map(image, sigma=sigma)
 
-    rag = build_rag(labels, cellprob, edge_map)
-    total_surface = calc_surface_rag(rag)
+    current = labels
+    rag_orig = build_rag(current, cellprob, edge_map)
+    i = 0
+    while True:
+        rag = rag_orig if i == 0 else build_rag(current, cellprob, edge_map)
+        i += 1
+        total_surface = calc_surface_rag(rag)
 
-    def _rel_contact(node: int, edge_data: dict) -> float:
-        """Edge contact relative to total label surface"""
-        edge_contact = int(edge_data.get("count", 0))
-        tot_surface = total_surface.get(node, 0) or 1
-        return float(edge_contact / tot_surface)
+        for u, v, d in rag.edges(data=True):
+            edge_contact = int(d.get("count", 0))
+            rel_u = edge_contact / (total_surface.get(u, 0) or 1)
+            rel_v = edge_contact / (total_surface.get(v, 0) or 1)
+            d["rel_contact_max"] = max(rel_u, rel_v)
 
-    # Calculate edge contact area relative to total label area
-    for u, v, d in rag.edges(data=True):
-        rel_u = _rel_contact(u, d)
-        rel_v = _rel_contact(v, d)
-        d["rel_contact_max"] = max(rel_u, rel_v)
+        merged = _merge_by_threshold(current, rag, weight_thresh, rel_contact_thresh)
 
-    merged = _merge_by_threshold(labels, rag, weight_thresh, rel_contact_thresh)
+        if np.unique(merged).size == np.unique(current).size:
+            break
+        current = merged
 
     return merged, rag
 
