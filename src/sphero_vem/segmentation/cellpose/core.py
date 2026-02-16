@@ -45,10 +45,11 @@ class CellposeFlowConfig(BaseConfig):
     flow3D_smooth: int = 2
     augment: bool = False
     tile_overlap: float = 0.3
-    median_filter_cellprob: int | None = 3
+    median_filter_cellprob: bool = True
+    median_filter_size: int = 3
     decompose_flows: bool = False
     decompose_flows_pad_fraction: float = 0.3
-    guided_filter_cellprob: bool = True
+    guided_filter_cellprob: bool = False
     guided_filter_radius: int = 8
     guided_filter_eps: float = 1e-2
     save_raw_flows: bool = False
@@ -190,7 +191,8 @@ def postprocess_flows(
         - seg_target: Target label group name
         - spacing_dir: Spacing directory name
         - save_raw_flows: Whether to save unprocessed flows
-        - median_filter_cellprob: Median filter size (or None)
+        - median_filter_cellprob: Whether to apply median filter
+        - median_filter_size: Median filter size
         - guided_filter_cellprob: Whether to apply guided filter
         - guided_filter_radius, guided_filter_eps: Guided filter parameters
         - decompose_flows: Whether to decompose flows via Helmholtz-Hodge
@@ -266,7 +268,7 @@ def postprocess_flows(
         )
 
     if config.median_filter_cellprob:
-        cellprob = median_filter(cellprob, config.median_filter_cellprob)
+        cellprob = median_filter(cellprob, config.median_filter_size)
 
     # Guided filter should be done using the raw dP.
     if config.guided_filter_cellprob:
