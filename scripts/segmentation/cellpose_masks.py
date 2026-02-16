@@ -14,12 +14,16 @@ def main() -> None:
     # Set segmentation parameters
     seg_params = {
         "cells": {
-            "merge_weight_threshold": 0.2,
-            "merge_contact_threshold": 0.3,
+            "merge_masks": False,
+            "min_diam": 4.5,
+            "niter": 400,
         },
         "nuclei": {
-            "merge_weight_threshold": 0.1,
+            "merge_weight_threshold": 0.12,
             "merge_contact_threshold": 0.15,
+            "merge_masks": True,
+            "niter": 400,
+            "min_diam": 3.7,
         },
     }
 

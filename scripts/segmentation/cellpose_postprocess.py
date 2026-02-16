@@ -27,21 +27,32 @@ def main():
         "cells": {
             "model": "cellposeSAM-cells-20260211_171241",
             "decompose_flows": False,
+            "median_filter_cellprob": False,
+            "guided_filter_cellprob": True,
+            "guided_filter_radius": 8,
+            "guided_filter_eps": 0.0001,
         },
         "nuclei": {
             "model": "cellposeSAM-nuclei-20260211_170320",
             "decompose_flows": True,
+            "median_filter_cellprob": False,
+            "guided_filter_cellprob": True,
+            "guided_filter_eps": 0.0001,
         },
     }
 
     mask_params = {
         "cells": {
-            "merge_weight_threshold": 0.2,
-            "merge_contact_threshold": 0.3,
+            "merge_masks": False,
+            "min_diam": 4.5,
+            "niter": 400,
         },
         "nuclei": {
-            "merge_weight_threshold": 0.1,
+            "merge_weight_threshold": 0.12,
             "merge_contact_threshold": 0.15,
+            "merge_masks": True,
+            "niter": 400,
+            "min_diam": 3.7,
         },
     }
 
@@ -49,16 +60,12 @@ def main():
     for seg_target, params in tqdm(flow_params.items(), "Post-processing flows"):
         config = CellposeFlowConfig(
             root_path=root_path,
-            model=params["model"],
             spacing_dir=spacing_dir,
-            decompose_flows=params["decompose_flows"],
             tile_overlap=0.3,
             batch_size=64,
-            median_filter_cellprob=False,
-            guided_filter_cellprob=True,
-            guided_filter_eps=0.001,
             save_raw_flows=False,
             verbose=False,
+            **params,
         )
         dP_raw = root.get(f"labels/{seg_target}/flows/dP-raw/{spacing_dir}")
         cellprob_raw = root.get(f"labels/{seg_target}/flows/cellprob-raw/{spacing_dir}")
@@ -70,7 +77,7 @@ def main():
 
     for seg_target, params in tqdm(mask_params.items(), "Calculating masks"):
         config = CellposeMaskConfig(
-            root_path=root_path, seg_target=seg_target, merge_masks=False, **params
+            root_path=root_path, seg_target=seg_target, **params
         )
         calculate_masks(config)
 
