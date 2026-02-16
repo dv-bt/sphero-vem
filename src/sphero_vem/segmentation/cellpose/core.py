@@ -3,7 +3,7 @@ This module contains functions and classes used for segmentation
 """
 
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from cellpose import models, dynamics
@@ -20,20 +20,6 @@ from sphero_vem.postprocessing import median_filter, guided_filter
 @dataclass
 class CellposeFlowConfig(BaseConfig):
     """Segment a volume stack using cellpose"""
-
-    EXCLUDED_PROCESSING_FIELDS = set(
-        [
-            "root_path",
-            "spacing_dir",
-            "out_path",
-            "verbose",
-            "zarr_chunks",
-            "model_dir",
-            "spacing",
-            "src_zarr",
-            "save_raw_flows",
-        ]
-    )
 
     root_path: Path
     model: str
@@ -58,6 +44,20 @@ class CellposeFlowConfig(BaseConfig):
     model_dir: Path = field(init=False)
     spacing: list[int | float] = field(init=False)
     src_zarr: zarr.Array = field(init=False)
+
+    EXCLUDED_PROCESSING_FIELDS = set(
+        [
+            "root_path",
+            "spacing_dir",
+            "out_path",
+            "verbose",
+            "zarr_chunks",
+            "model_dir",
+            "spacing",
+            "src_zarr",
+            "save_raw_flows",
+        ]
+    )
 
     def __post_init__(self):
         # Allow loading pretrained model
@@ -351,12 +351,13 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
 
 
 @dataclass
-class CellposeMaskConfig:
+class CellposeMaskConfig(BaseConfig):
     """Parameters used to calculate cellpose masks"""
 
     root_path: Path
     seg_target: str
     spacing_dir: str = "100-100-100"
+    label_root: str | None = None
     niter: int = 200
     cellprob_threshold: float = -0.5
     flow_threshold: float = 0.4
@@ -370,6 +371,11 @@ class CellposeMaskConfig:
 
     min_size: int = field(init=False)
     spacing: list[int | float] = field(init=False)
+    label_path: str = field(init=False)
+
+    EXCLUDED_PROCESSING_FIELDS = set(
+        ["root_path", "device", "zarr_chunks", "label_root", "label_path"]
+    )
 
     def __post_init__(self):
         # Celculate min_size in pixel from min_diam in micrometers
@@ -391,6 +397,16 @@ class CellposeMaskConfig:
         if not self.zarr_chunks:
             self.zarr_chunks = src_zarr.chunks
 
+        # Process label_root to cover cases where labels are not in a standard location
+        # within the zarr store.
+        # One example of this is pretrained labels, which are saved under
+        # dataset.zarr/pretrained/
+        self.label_path = (
+            f"{self.label_root}/labels/{self.seg_target}"
+            if self.label_root is not None
+            else f"labels/{self.seg_target}"
+        )
+
 
 def calculate_masks(config: CellposeMaskConfig):
     """Calculate segmentation masks using cellpose flows"""
@@ -398,10 +414,8 @@ def calculate_masks(config: CellposeMaskConfig):
     device = torch.device(config.device)
 
     root = zarr.open_group(config.root_path, mode="a")
-    cellprob_zarr = root.get(
-        f"labels/{config.seg_target}/flows/cellprob/{config.spacing_dir}"
-    )
-    dp_zarr = root.get(f"labels/{config.seg_target}/flows/dP/{config.spacing_dir}")
+    cellprob_zarr = root.get(f"{config.label_path}/flows/cellprob/{config.spacing_dir}")
+    dp_zarr = root.get(f"{config.label_path}/flows/dP/{config.spacing_dir}")
 
     cellprob: np.ndarray = cellprob_zarr[:]
     dP: np.ndarray = dp_zarr[:]
@@ -434,23 +448,11 @@ def calculate_masks(config: CellposeMaskConfig):
             sigma=config.gaussian_edge_sigma,
         )
 
-    processing_dict = asdict(config)
-    excluded_keys = ["root_path", "device", "zarr_chunks"]
-    processing = cellprob_zarr.attrs.get("processing") + [
-        {
-            "step": "segmentation mask generation",
-            **{
-                key: val
-                for key, val in processing_dict.items()
-                if key not in excluded_keys
-            },
-        }
-    ]
-
+    processing = ProcessingStep.from_config("segmentation-mask-generation", config)
     write_zarr(
         root,
         masks,
-        f"labels/{config.seg_target}/masks/{config.spacing_dir}",
+        f"{config.label_path}/masks/{config.spacing_dir}",
         src_zarr=cellprob_zarr,
         dtype=np.uint8 if masks.max() <= 255 else np.uint16,
         inputs=inputs,
