@@ -44,7 +44,7 @@ def get_seg_target(array: zarr.Array) -> str:
 def main():
     root_path = Path("data/processed/segmented/Au_01-vol_01.zarr")
     gt_root = Path("data/processed/labeled/Au_01-vol_01/labeled-05")
-    array_path = "labels/cells/masks/100-100-100"
+    array_path = "labels/cells/masks/50-50-50"
 
     root = zarr.open(root_path, mode="r")
     masks = root.get(array_path)
@@ -80,6 +80,7 @@ def main():
             }
         )
         results_df: pd.DataFrame = results_df.merge(results_aji)
+        results_df["spacing"] = scale_dir
 
     save_path = root_path / f"labels/{seg_target}/segmentation-eval.parquet"
     save_path.parent.mkdir(exist_ok=True, parents=True)
