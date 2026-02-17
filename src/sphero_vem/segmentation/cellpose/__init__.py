@@ -25,6 +25,7 @@ from .core import (
 )
 from .finetuning import CellposeFinetuneConfig, finetune_cellpose
 from .utils import upsample_masks
+from .evaluation import evaluate_segmentation
 
 __all__ = [
     "CellposeFlowConfig",
@@ -36,4 +37,5 @@ __all__ = [
     "CellposeFinetuneConfig",
     "finetune_cellpose",
     "upsample_masks",
+    "evaluate_segmentation",
 ]
