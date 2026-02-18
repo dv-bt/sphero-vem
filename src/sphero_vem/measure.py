@@ -171,8 +171,8 @@ def props_voxel(
 
     if calc_volume:
         for i, prop in enumerate(props):
-            results[i]["volume"] = prop.area
-            results[i]["diam_equiv"] = prop.equivalent_diameter_area
+            results[i]["volume"] = float(prop.area)
+            results[i]["diam_equiv"] = float(prop.equivalent_diameter_area)
 
     return results
 
@@ -736,8 +736,12 @@ def props_mesh(
     """
 
     # Calculate mesh on downsampled SDF to reduce the number of vertices.
+    # Use effective spacing for the downsampled grid so that marching cubes returns
+    # vertices in the correct physical coordinates (matching the full-res SDF grid).
+    downsampled_spacing = tuple(s * mesh_downsample_factor for s in spacing)
     verts, faces, vertex_areas = get_mesh(
-        sdf=ndi.zoom(sdf, 1 / mesh_downsample_factor, order=1), spacing=spacing
+        sdf=ndi.zoom(sdf, 1 / mesh_downsample_factor, order=1),
+        spacing=downsampled_spacing,
     )
 
     curv_mean, curv_gauss, kappa1, kappa2 = _calc_curvature(
@@ -958,7 +962,7 @@ def label_properties(
 
     check_isotropic(spacing, raise_error=True)
 
-    results = props_voxel(labels, bbox_margin=bbox_margin)
+    results = props_voxel(labels, bbox_margin=bbox_margin, calc_volume=voxel_only)
     if not voxel_only:
         for entry in tqdm(results, "Analyzing labels"):
             sel_slice = slice_from_bbox(entry["bbox_exp"])
