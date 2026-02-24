@@ -161,6 +161,7 @@ notebooks/temp
 # Untracked folders
 notebooks/untracked/
 scripts/untracked/
+scripts/sync/
 
 # Folder with notebooks with plots for the paper
 notebooks/paper
