@@ -13,7 +13,11 @@ import zarr
 from sphero_vem.io import write_zarr
 from sphero_vem.utils import vprint
 from sphero_vem.utils.config import BaseConfig, ProcessingStep
-from sphero_vem.segmentation.cellpose.postptocessing import merge_labels, decompose_flow
+from sphero_vem.segmentation.cellpose.postptocessing import (
+    merge_labels,
+    decompose_flow,
+    expand_labels,
+)
 from sphero_vem.postprocessing import median_filter, guided_filter
 
 
@@ -362,6 +366,8 @@ class CellposeMaskConfig(BaseConfig):
     cellprob_threshold: float = -0.5
     flow_threshold: float = 0.4
     min_diam: float = 3
+    expand_labels: bool = False
+    max_expansion_steps: int = 5
     merge_masks: bool = True
     gaussian_edge_sigma: float = 2.0
     merge_weight_threshold: float = 0.2
@@ -435,6 +441,15 @@ def calculate_masks(config: CellposeMaskConfig):
 
     # Post-process labels
     inputs = [cellprob_zarr.path, dp_zarr.path]
+
+    if config.expand_labels:
+        masks = expand_labels(
+            masks,
+            cellprob_logits=cellprob,
+            cellprob_threshold=0,
+            max_expansion_steps=config.max_expansion_steps,
+        )
+
     if config.merge_masks:
         image_arr = root.get(f"images/{config.spacing_dir}")
         inputs.append(image_arr.path)

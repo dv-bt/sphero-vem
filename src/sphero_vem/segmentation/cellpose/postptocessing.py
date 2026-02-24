@@ -5,6 +5,8 @@ Various functions used for postprocessing cellpose flows and masks
 import networkx as nx
 import numpy as np
 from skimage import graph
+from skimage.morphology import ball
+from scipy.ndimage import binary_closing
 import torch
 import torch.nn.functional as F
 from sphero_vem.utils import vprint
@@ -12,6 +14,7 @@ from sphero_vem.segmentation.cellpose.utils import (
     gaussian_edge_map,
     build_rag,
     calc_surface_rag,
+    region_fill,
 )
 
 
@@ -146,6 +149,43 @@ def merge_labels(
         current = merged
 
     return merged, rag
+
+
+def expand_labels(
+    labels: np.ndarray,
+    cellprob_logits: np.ndarray,
+    cellprob_threshold: float = 0.0,
+    max_expansion_steps: int = 10,
+    fill_holes_radius: int = 0,
+) -> np.ndarray:
+    """Expand Cellpose labels into foreground mask to close seams before RAG merging.
+
+    Parameters
+    ----------
+    labels : np.ndarray
+        Integer label volume (0 = background).
+    cellprob_logits : np.ndarray
+        Cellprob logit volume, same shape as `labels`.
+    cellprob_threshold : float, optional
+        Logit threshold for foreground mask. Default 0.0.
+    max_expansion_steps : int, optional
+        Maximum dilation iterations. Default 10.
+    fill_holes_radius : int, optional
+        If > 0, applies binary closing with a ball of this radius to the foreground
+        mask before expansion, to fill small noise pockets. Default 0 (disabled).
+
+    Returns
+    -------
+    np.ndarray
+        Expanded label volume, zero outside foreground mask.
+    """
+    foreground = cellprob_logits > cellprob_threshold
+
+    if fill_holes_radius > 0:
+        footprint = ball(fill_holes_radius)
+        foreground = binary_closing(foreground, structure=footprint)
+
+    return region_fill(labels, foreground, max_expansion_steps).astype(labels.dtype)
 
 
 def _get_curl_free_component(

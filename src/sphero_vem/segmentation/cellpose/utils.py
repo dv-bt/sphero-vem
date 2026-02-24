@@ -12,7 +12,13 @@ from skimage import graph
 from sphero_vem.io import write_zarr
 from sphero_vem.preprocessing import resample_array
 from sphero_vem.utils import dirname_from_spacing
-from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_host
+from sphero_vem.utils.accelerator import (
+    xp,
+    ndi,
+    ArrayLike,
+    gpu_dispatch,
+    to_host,
+)
 
 
 @gpu_dispatch(return_to_host=True)
@@ -53,7 +59,7 @@ def _calc_foreground(
 
 
 @gpu_dispatch(return_to_host=True)
-def _region_fill(
+def region_fill(
     seeds: ArrayLike, foreground: ArrayLike, max_expansion_steps: int = 10
 ) -> np.ndarray:
     """Expand integer seeds by iterative grey dilation, constrained to a foreground mask.
@@ -64,7 +70,7 @@ def _region_fill(
     Parameters
     ----------
     seeds : ArrayLike
-        Integer label array (0 = background). Modified in-place.
+        Integer label array (0 = background).
     foreground : ArrayLike
         Boolean mask. Expansion is strictly limited to True voxels.
     max_expansion_steps : int, optional
@@ -75,6 +81,7 @@ def _region_fill(
     np.ndarray
         Expanded label array, zero outside foreground.
     """
+    seeds = xp.copy(seeds)
     structure = ndi.generate_binary_structure(rank=seeds.ndim, connectivity=1)
     dilation_buffer = xp.empty_like(seeds)
 
@@ -119,7 +126,7 @@ def _upsample_masks_region_fill(
     zoom_factors = np.array(cellprob_hr.shape) / np.array(labels_lr.shape)
     seeds = _upsample_seeds(labels_lr, erosion_iterations, zoom_factors)
     foreground = cellprob_hr > cellprob_threshold
-    return _region_fill(seeds, foreground, max_expansion_steps).astype(labels_lr.dtype)
+    return region_fill(seeds, foreground, max_expansion_steps).astype(labels_lr.dtype)
 
 
 def upsample_masks(
@@ -359,3 +366,34 @@ def gaussian_edge_map(image: ArrayLike, sigma: float | int) -> ArrayLike:
     p1, p99 = xp.percentile(edge_map, (1, 99))
     edge_map = xp.clip((edge_map - p1) / (p99 - p1), 0, 1)
     return edge_map
+
+
+def rag_to_df(rag: graph.RAG) -> pd.DataFrame:
+    """Convert a RAG to a tidy DataFrame for inspection and debugging.
+
+    Flattens the edge data of a RAG (as produced by `build_rag`) into a
+    DataFrame where each row corresponds to one edge between two adjacent
+    label regions.
+
+    Parameters
+    ----------
+    rag : graph.RAG
+        Region adjacency graph, as returned by `build_rag`.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per edge with columns:
+
+        - ``u``, ``v`` : int — the two adjacent label IDs.
+        - ``weight`` : float — merge cost (1 - prob_weight + edge_weight).
+        - ``prob_weight`` : float — mean cell probability across boundary voxels
+          (sigmoid of mean logit).
+        - ``edge_weight`` : float — mean edge map value across boundary voxels.
+        - ``count`` : int — number of boundary voxels between the two regions.
+
+    See Also
+    --------
+    build_rag : Constructs the RAG from Cellpose labels, cellprob logits, and an edge map.
+    """
+    return pd.DataFrame([{"u": u, "v": v, **d} for u, v, d in rag.edges(data=True)])
