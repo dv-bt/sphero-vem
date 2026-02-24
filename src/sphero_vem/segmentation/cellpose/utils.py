@@ -16,18 +16,30 @@ from sphero_vem.utils.accelerator import xp, ndi, ArrayLike, gpu_dispatch, to_ho
 
 
 @gpu_dispatch(return_to_host=True)
-def _calc_seeds(
+def _upsample_seeds(
     labels_lr: ArrayLike, erosion_iterations: int, zoom_factors: ArrayLike
-) -> tuple[np.ndarray, np.ndarray]:
-    """Generate high res seeds. Returns also low-res mask foreground."""
+) -> np.ndarray:
+    """Zoom low-res labels to high-res seeds, with erosion to prevent bleed on zoom.
 
-    foreground_lr = labels_lr > 0
-    eroded_fg = foreground_lr
+    Parameters
+    ----------
+    labels_lr : ArrayLike
+        Low-resolution integer label array.
+    erosion_iterations : int
+        Number of binary erosion steps applied before zooming.
+    zoom_factors : ArrayLike
+        Per-axis zoom factors.
+
+    Returns
+    -------
+    np.ndarray
+        High-resolution seed array.
+    """
+    eroded = labels_lr > 0
     for _ in range(erosion_iterations):
-        eroded_fg = ndi.binary_erosion(eroded_fg)
-    seeds_lr = labels_lr * eroded_fg
-    seeds_hr = ndi.zoom(seeds_lr, zoom_factors, order=0)
-    return seeds_hr
+        eroded = ndi.binary_erosion(eroded)
+    seeds_lr = labels_lr * eroded
+    return ndi.zoom(seeds_lr, zoom_factors, order=0)
 
 
 @gpu_dispatch(return_to_host=True)
@@ -42,47 +54,72 @@ def _calc_foreground(
 
 @gpu_dispatch(return_to_host=True)
 def _region_fill(
-    seeds_hr: ArrayLike, foreground_hr: ArrayLike, max_expansion_steps: int = 10
+    seeds: ArrayLike, foreground: ArrayLike, max_expansion_steps: int = 10
 ) -> np.ndarray:
-    """Region fill aglorithm. Runs for at most max_expansion_steps"""
-    structure = ndi.generate_binary_structure(rank=3, connectivity=1)
+    """Expand integer seeds by iterative grey dilation, constrained to a foreground mask.
 
-    # Create dilation buffer to save memory
-    dilation_buffer = xp.empty_like(seeds_hr)
+    Each iteration expands labels by 1 voxel (6-connectivity). Background regions
+    act as hard barriers since expansion is strictly limited to the foreground mask.
 
-    for i in range(max_expansion_steps):
-        ndi.grey_dilation(seeds_hr, footprint=structure, output=dilation_buffer)
-        should_fill = (seeds_hr == 0) & foreground_hr & (dilation_buffer > 0)
+    Parameters
+    ----------
+    seeds : ArrayLike
+        Integer label array (0 = background). Modified in-place.
+    foreground : ArrayLike
+        Boolean mask. Expansion is strictly limited to True voxels.
+    max_expansion_steps : int, optional
+        Maximum dilation iterations. Default 50.
+
+    Returns
+    -------
+    np.ndarray
+        Expanded label array, zero outside foreground.
+    """
+    structure = ndi.generate_binary_structure(rank=seeds.ndim, connectivity=1)
+    dilation_buffer = xp.empty_like(seeds)
+
+    for _ in range(max_expansion_steps):
+        ndi.grey_dilation(seeds, footprint=structure, output=dilation_buffer)
+        should_fill = (seeds == 0) & foreground & (dilation_buffer > 0)
         if not xp.any(should_fill):
             break
-        seeds_hr[should_fill] = dilation_buffer[should_fill]
+        seeds[should_fill] = dilation_buffer[should_fill]
 
-    # Trim any accidental overflows
-    seeds_hr *= foreground_hr
-    return seeds_hr
+    seeds *= foreground
+    return seeds
 
 
-def _upsample_region_fill(
+def _upsample_masks_region_fill(
     labels_lr: np.ndarray,
     cellprob_hr: np.ndarray,
     erosion_iterations: int = 2,
     cellprob_threshold: float = 0.0,
-    max_expansion_steps: int = 10,
+    max_expansion_steps: int = 50,
 ) -> np.ndarray:
-    """
-    Upsample cellpose labels with a region fill algorithm using thresholded cellprob
-    logits.
-    """
+    """Upsample Cellpose labels using region fill constrained by cellprob logits.
 
+    Parameters
+    ----------
+    labels_lr : np.ndarray
+        Low-resolution integer label volume.
+    cellprob_hr : np.ndarray
+        High-resolution cellprob logit volume.
+    erosion_iterations : int, optional
+        Erosion steps before zooming seeds. Default 2.
+    cellprob_threshold : float, optional
+        Logit threshold for foreground mask. Default 0.0.
+    max_expansion_steps : int, optional
+        Maximum dilation iterations. Default 50.
+
+    Returns
+    -------
+    np.ndarray
+        Upsampled label volume, same shape as `cellprob_hr`.
+    """
     zoom_factors = np.array(cellprob_hr.shape) / np.array(labels_lr.shape)
-
-    seeds_hr = _calc_seeds(labels_lr, erosion_iterations, zoom_factors)
-    foregroung_hr = _calc_foreground(cellprob_hr, cellprob_threshold)
-    labels_hr = _region_fill(
-        seeds_hr, foregroung_hr, max_expansion_steps=max_expansion_steps
-    )
-
-    return labels_hr.astype(labels_lr.dtype)
+    seeds = _upsample_seeds(labels_lr, erosion_iterations, zoom_factors)
+    foreground = cellprob_hr > cellprob_threshold
+    return _region_fill(seeds, foreground, max_expansion_steps).astype(labels_lr.dtype)
 
 
 def upsample_masks(
@@ -124,7 +161,7 @@ def upsample_masks(
 
     labels_lr: np.ndarray = labels_lr_zarr[:]
     cellprob_hr: np.ndarray = cellprob_hr_zarr[:]
-    labels_hr = _upsample_region_fill(
+    labels_hr = _upsample_masks_region_fill(
         labels_lr,
         cellprob_hr,
         erosion_iterations=erosion_iterations,
