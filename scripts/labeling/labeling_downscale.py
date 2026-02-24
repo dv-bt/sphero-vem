@@ -56,7 +56,7 @@ def process_gt(path: Path, vol_shape: tuple[int, int, int]) -> dict:
 
 def main():
     root_path = Path("data/processed/segmented/Au_01-vol_01.zarr")
-    label_root = Path("data/processed/labeled/Au_01-vol_01/labeled-05/")
+    label_root = Path("data/processed/labeled/Au_01-vol_01/labeled-06/")
     src_dir = label_root / "50-50-50/labels"
     dst_dir = label_root / "100-100-100"
 
