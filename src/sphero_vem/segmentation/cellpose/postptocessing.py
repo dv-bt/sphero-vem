@@ -7,6 +7,7 @@ import numpy as np
 from skimage import graph
 import torch
 import torch.nn.functional as F
+from sphero_vem.utils import vprint
 from sphero_vem.segmentation.cellpose.utils import (
     gaussian_edge_map,
     build_rag,
@@ -55,6 +56,7 @@ def merge_labels(
     rel_contact_thresh: float = 0.1,
     weight_thresh: float = 0.15,
     sigma: int = 1,
+    verbose: bool = False,
 ) -> tuple[np.ndarray, graph.RAG]:
     """
     Merge adjacent labeled regions based on boundary strength and relative contact area.
@@ -90,6 +92,9 @@ def merge_labels(
     sigma : int, optional
         Standard deviation for the Gaussian kernel used when computing the image
         gradient magnitude if `edge_map` is not provided. Default is 1.
+    verbose : bool, optional
+        Toogles verbose output, useful for debugging unexpected behavior.
+        Default is False.
 
     Returns
     -------
@@ -117,6 +122,7 @@ def merge_labels(
     current = labels
     rag_orig = build_rag(current, cellprob, edge_map)
     i = 0
+    vprint(f"Unique labels: {np.unique(current).size}", verbose)
     while True:
         rag = rag_orig if i == 0 else build_rag(current, cellprob, edge_map)
         i += 1
@@ -129,8 +135,13 @@ def merge_labels(
             d["rel_contact_max"] = max(rel_u, rel_v)
 
         merged = _merge_by_threshold(current, rag, weight_thresh, rel_contact_thresh)
+        vprint(
+            f"Iteration {i}: Unique labels after merging: {np.unique(merged).size}",
+            verbose,
+        )
 
         if np.unique(merged).size == np.unique(current).size:
+            vprint(f"No improvement, stop merging at iteration {i}", verbose)
             break
         current = merged
 
