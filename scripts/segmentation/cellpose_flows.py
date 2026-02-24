@@ -2,9 +2,7 @@
 Segment a volume stack using cellpose
 """
 
-import shutil
 from pathlib import Path
-import zarr
 import torch
 from sphero_vem.segmentation.cellpose import CellposeFlowConfig, calculate_flows
 
@@ -12,30 +10,25 @@ from sphero_vem.segmentation.cellpose import CellposeFlowConfig, calculate_flows
 def main():
     # Ensure that images are in the right directory
     root_path = Path("data/processed/segmented/Au_01-vol_01.zarr")
-    source_path = Path("data/processed/cropped/Au_01-vol_01.zarr")
-    try:
-        zarr.open_group(root_path, mode="r")
-    except FileNotFoundError:
-        shutil.copytree(source_path, root_path)
 
     # Set segmentation parameters
     seg_params = {
         "cells": {
-            "model": "cellposeSAM-cells-20260211_171241",
+            "model": "cellposeSAM-cells-20260223_093152",
             "augment": True,
             "flow3D_smooth": 3,
             "decompose_flows": False,
             "median_filter_cellprob": False,
             "guided_filter_cellprob": True,
             "guided_filter_radius": 8,
-            "guided_filter_eps": 0.0001,
+            "guided_filter_eps": 0.01,
         },
         "nuclei": {
-            "model": "cellposeSAM-nuclei-20260211_170320",
+            "model": "cellposeSAM-nuclei-20260223_103423",
             "decompose_flows": True,
             "median_filter_cellprob": False,
             "guided_filter_cellprob": True,
-            "guided_filter_eps": 0.0001,
+            "guided_filter_eps": 0.001,
         },
     }
     spacing_dir = "100-100-100"

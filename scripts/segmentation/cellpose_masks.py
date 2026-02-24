@@ -19,8 +19,9 @@ def main() -> None:
             "niter": 400,
         },
         "nuclei": {
-            "merge_weight_threshold": 0.12,
+            "merge_weight_threshold": 0.15,
             "merge_contact_threshold": 0.15,
+            "expand_labels": True,
             "merge_masks": True,
             "niter": 400,
             "min_diam": 3.7,
@@ -29,7 +30,7 @@ def main() -> None:
 
     for seg_target, params in tqdm(seg_params.items(), "Calculating masks"):
         config = CellposeMaskConfig(
-            root_path=stack_root, seg_target=seg_target, merge_masks=False, **params
+            root_path=stack_root, seg_target=seg_target, **params
         )
         calculate_masks(config)
 
