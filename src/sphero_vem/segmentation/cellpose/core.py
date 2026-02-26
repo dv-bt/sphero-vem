@@ -35,7 +35,7 @@ class CellposeFlowConfig(BaseConfig):
     flow3D_smooth: int = 2
     augment: bool = False
     tile_overlap: float = 0.3
-    median_filter_cellprob: bool = True
+    median_filter_cellprob: bool = False
     median_filter_size: int = 3
     decompose_flows: bool = False
     decompose_flows_pad_fraction: float = 0.3
