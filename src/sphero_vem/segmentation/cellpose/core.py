@@ -204,9 +204,9 @@ def postprocess_flows(
         - zarr_chunks: Chunk size for zarr arrays
         - verbose: Logging control
     dP : np.ndarray
-        Raw displacement field with shape (3, Z, Y, X).
+        Raw displacement field with shape (3, Z, Y, X), or (2, Y, X) if 2D.
     cellprob : np.ndarray
-        Raw cell probability logits with shape (Z, Y, X).
+        Raw cell probability logits with shape (Z, Y, X), or (Y, X) if 2D.
     save_root : zarr.Group | None, optional
         Pre-opened zarr group for saving. If None, opens config.out_path.
         This allows external control over zarr cleanup operations.
@@ -232,8 +232,10 @@ def postprocess_flows(
     """
 
     # Input validation
-    if dP.shape[0] != 3:
-        raise ValueError(f"dP must have shape (3, Z, Y, X), got {dP.shape}")
+    if dP.shape[0] != cellprob.ndim:
+        raise ValueError(
+            f"dP must have shape ({cellprob.ndim}, Z, Y, X), got {dP.shape}"
+        )
     if dP.shape[1:] != cellprob.shape:
         raise ValueError(
             f"dP and cellprob spatial dimensions must match. "
