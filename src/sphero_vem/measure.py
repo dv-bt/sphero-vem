@@ -620,13 +620,10 @@ def _get_vertex_areas(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
 def _remove_boundary_caps(
     verts: np.ndarray,
     faces: np.ndarray,
+    sdf_shape: tuple[int, ...],
+    spacing: tuple[float, float, float],
 ) -> np.ndarray:
     """Remove faces where all vertices lie on the same array boundary plane.
-
-    Marching cubes generates flat cap faces at array boundaries where the SDF
-    is negative (i.e. where the object is cut by the volume edge). These are
-    identified by all three vertices sharing the global min or max coordinate
-    along any axis.
 
     Parameters
     ----------
@@ -634,6 +631,10 @@ def _remove_boundary_caps(
         Mesh vertices in physical coordinates, shape (V, 3).
     faces : np.ndarray
         Triangle face indices, shape (F, 3).
+    sdf_shape : tuple[int, ...]
+        Shape of the SDF array passed to marching cubes.
+    spacing : tuple[float, float, float]
+        Physical voxel spacing used by marching cubes (z, y, x).
 
     Returns
     -------
@@ -643,7 +644,7 @@ def _remove_boundary_caps(
     cap_mask = np.zeros(len(faces), dtype=bool)
     v = [verts[faces[:, i]] for i in range(3)]
     for axis in range(3):
-        for boundary in [verts[:, axis].min(), verts[:, axis].max()]:
+        for boundary in [0.0, (sdf_shape[axis] - 1) * spacing[axis]]:
             on_plane = np.stack(
                 [np.isclose(v[i][:, axis], boundary) for i in range(3)], axis=1
             ).all(axis=1)
@@ -656,19 +657,12 @@ def get_mesh(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Calculate mesh from 0-level set of the SDF using the marching cubes algorithm.
 
-    This algorithm does not necessarily produce a watertight mesh. If the object is
-    cut by the imaged volume boundary, the mesh will be open. This ensures that only
-    the real surface of the object is measured.
-
-    NOTE: if real flat surfaces lay exactly at the image boundaries, they will be
-    discarded.
-
     Parameters
     ----------
     sdf : np.ndarray
         Signed distance function, negative on the inside.
     spacing : tuple[float, float, float]
-        Physical spacing of the SDF voxel grid. It should have the same units as SDF.
+        Physical spacing of the SDF voxel grid, same units as SDF values.
 
     Returns
     -------
@@ -679,8 +673,11 @@ def get_mesh(
     vertex_areas : np.ndarray
         Area associated to each vertex, equal to 1/3 of the adjacent face areas.
     """
-    verts, faces, _, _ = marching_cubes(to_host(sdf), level=0.0, spacing=spacing)
-    faces = _remove_boundary_caps(verts, faces)
+    sdf_host = to_host(sdf)
+    verts, faces, _, _ = marching_cubes(sdf_host, level=0.0, spacing=spacing)
+    faces = _remove_boundary_caps(
+        verts, faces, sdf_shape=sdf_host.shape, spacing=spacing
+    )
     vertex_areas = _get_vertex_areas(verts, faces)
     return verts, faces, vertex_areas
 
