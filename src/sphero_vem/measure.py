@@ -120,7 +120,10 @@ class LabelAnalysisConfig(BaseConfig):
 
 @gpu_dispatch()
 def props_voxel(
-    labels: ArrayLike, bbox_margin: int = 15, calc_volume: bool = False
+    labels: ArrayLike,
+    spacing: tuple[float, float, float],
+    bbox_margin: int = 15,
+    calc_volume: bool = False,
 ) -> list[dict]:
     """Calculate voxel-based properties using GPU acceleration.
 
@@ -131,9 +134,13 @@ def props_voxel(
     ----------
     labels : ArrayLike
         Array with the labeled image.
+    spacing : tuple[float, float, float]
+        Physical spacing of the voxel grid. This will only be used when calc_volume
+        is True.
     bbox_margin : int
         Constant margin for bounding box expansion. The returned bounding box will be
         expanded by this value in all directions.
+
     calc_volume : bool
         Flag that controls whether to calculate volume and related quantities directly
         from the voxel map. This is useful when SDF and mesh-based approaches are
@@ -149,8 +156,8 @@ def props_voxel(
         - bbox_exp: bounding box expanded by bbox_margin
         - eigvals: eigenvalues of the gyration tensor (sorted ascending)
         - centroid: coordinates of the image centroid
-        - volume: label volume (if calc_volume=True)
-        - diam_equiv: equivalent diameter (if calc_volume=True)
+        - volume: label volume in µm^3 (if calc_volume=True)
+        - diam_equiv: equivalent diameter in µm^2 (if calc_volume=True)
 
     """
 
@@ -170,7 +177,8 @@ def props_voxel(
     ]
 
     if calc_volume:
-        for i, prop in enumerate(props):
+        props_spacing = ski.measure.regionprops(labels, spacing=spacing)
+        for i, prop in enumerate(props_spacing):
             results[i]["volume"] = float(prop.area)
             results[i]["diam_equiv"] = float(prop.equivalent_diameter_area)
 
@@ -609,10 +617,51 @@ def _get_vertex_areas(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
     return vertex_area
 
 
+def _remove_boundary_caps(
+    verts: np.ndarray,
+    faces: np.ndarray,
+) -> np.ndarray:
+    """Remove faces where all vertices lie on the same array boundary plane.
+
+    Marching cubes generates flat cap faces at array boundaries where the SDF
+    is negative (i.e. where the object is cut by the volume edge). These are
+    identified by all three vertices sharing the global min or max coordinate
+    along any axis.
+
+    Parameters
+    ----------
+    verts : np.ndarray
+        Mesh vertices in physical coordinates, shape (V, 3).
+    faces : np.ndarray
+        Triangle face indices, shape (F, 3).
+
+    Returns
+    -------
+    np.ndarray
+        Filtered face indices with boundary caps removed.
+    """
+    cap_mask = np.zeros(len(faces), dtype=bool)
+    v = [verts[faces[:, i]] for i in range(3)]
+    for axis in range(3):
+        for boundary in [verts[:, axis].min(), verts[:, axis].max()]:
+            on_plane = np.stack(
+                [np.isclose(v[i][:, axis], boundary) for i in range(3)], axis=1
+            ).all(axis=1)
+            cap_mask |= on_plane
+    return faces[~cap_mask]
+
+
 def get_mesh(
     sdf: np.ndarray, spacing: tuple[float, float, float]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Calculate mesh from 0-level set of the SDF using the marching cubes algorithm.
+
+    This algorithm does not necessarily produce a watertight mesh. If the object is
+    cut by the imaged volume boundary, the mesh will be open. This ensures that only
+    the real surface of the object is measured.
+
+    NOTE: if real flat surfaces lay exactly at the image boundaries, they will be
+    discarded.
 
     Parameters
     ----------
@@ -624,13 +673,14 @@ def get_mesh(
     Returns
     -------
     verts : np.ndarray
-        Vertices of the mesh
+        Vertices of the mesh.
     faces : np.ndarray
-        Faces of the mesh
-    vertex_area s: np.ndarray
+        Faces of the mesh, with boundary cap faces removed.
+    vertex_areas : np.ndarray
         Area associated to each vertex, equal to 1/3 of the adjacent face areas.
     """
     verts, faces, _, _ = marching_cubes(to_host(sdf), level=0.0, spacing=spacing)
+    faces = _remove_boundary_caps(verts, faces)
     vertex_areas = _get_vertex_areas(verts, faces)
     return verts, faces, vertex_areas
 
@@ -962,7 +1012,9 @@ def label_properties(
 
     check_isotropic(spacing, raise_error=True)
 
-    results = props_voxel(labels, bbox_margin=bbox_margin, calc_volume=voxel_only)
+    results = props_voxel(
+        labels, spacing=spacing, bbox_margin=bbox_margin, calc_volume=voxel_only
+    )
     if not voxel_only:
         for entry in tqdm(results, "Analyzing labels"):
             sel_slice = slice_from_bbox(entry["bbox_exp"])
