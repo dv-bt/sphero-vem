@@ -128,71 +128,101 @@ def stack_to_zarr(
     create_ome_multiscales(image_group)
 
 
-def write_zarr(
-    root: zarr.Group | Path | str,
-    array: np.ndarray | da.Array,
+def _create_zarr_array(
+    root: zarr.Group,
     dst_path: str,
-    src_zarr: zarr.Array | None = None,
-    spacing: tuple[int | float] | None = None,
-    dtype: Any | None = None,
-    shape: tuple[int] | None = None,
-    processing: ProcessingStep | list[ProcessingStep] | list[dict] | dict | None = None,
-    inputs: list[str] | None = None,
-    zarr_chunks: tuple[int] | None = None,
-) -> None:
-    """Write numpy or dask array to zarr.
+    shape: tuple[int, ...],
+    chunks: tuple[int, ...],
+    dtype: Any,
+) -> zarr.Array:
+    """Create a compressed zarr array at the given path.
 
     Parameters
     ----------
-    root: zarr.Group | pathlib.Path | str
-        Root zarr group used to save the image, or path to the root group.
-    array: np.ndarray | da.Array
-        Numpy or Dask array containing the to save. Axis order should be (CZ)YX.
+    root : zarr.Group
+        Root zarr group.
     dst_path : str
-        Path under root where to save the file.
-    src_zarr: zarr.Array | None
-        Source zarr array. Used to determine previous processing, as well as chunk size
-        and spacing unless they are specified. Default is None.
-    spacing: tuple[int | float] | None
-        Spacing of the array. If None, uses the spacing of src_zarr if provided.
-        Spacing is saved under the "spacing" key in the destination array attributes.
-        NOTE: this might lead to incorrect spacing if resampling was involved!
+        Path under root where to create the array.
+    shape : tuple[int, ...]
+        Array shape.
+    chunks : tuple[int, ...]
+        Chunk shape.
+    dtype : Any
+        Array dtype.
+
+    Returns
+    -------
+    zarr.Array
+        Created zarr array, compressed with zstd and bitshuffle.
+    """
+    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
+    return root.require_array(
+        dst_path,
+        shape=shape,
+        chunks=chunks,
+        compressors=compressor,
+        dtype=dtype,
+        overwrite=True,
+    )
+
+
+def _write_zarr_data(dst_zarr: zarr.Array, array: np.ndarray | da.Array) -> None:
+    """Write a numpy or dask array into an existing zarr array.
+
+    Parameters
+    ----------
+    dst_zarr : zarr.Array
+        Destination zarr array, must have compatible shape and dtype.
+    array : np.ndarray | da.Array
+        Data to write.
+
+    Raises
+    ------
+    TypeError
+        If array is neither a numpy nor a dask array.
+    """
+    if isinstance(array, np.ndarray):
+        dst_zarr[...] = array
+    elif isinstance(array, da.Array):
+        with ProgressBar():
+            array.to_zarr(dst_zarr)
+    else:
+        raise TypeError(f"Unsupported type {type(array)} for input array")
+
+
+def _write_zarr_metadata(
+    root: zarr.Group,
+    dst_zarr: zarr.Array,
+    src_zarr: zarr.Array | None = None,
+    spacing: tuple[int | float, ...] | None = None,
+    processing: ProcessingStep | list[ProcessingStep] | list[dict] | dict | None = None,
+    inputs: list[str] | None = None,
+) -> None:
+    """Write metadata to a zarr array and create OME multiscales.
+
+    Parameters
+    ----------
+    root : zarr.Group
+        Root zarr group.
+    dst_zarr : zarr.Array
+        Destination zarr array to attach metadata to.
+    src_zarr : zarr.Array | None
+        Source zarr array. Used to read previous processing steps, spacing,
+        and inputs if not explicitly provided. Default is None.
+    spacing : tuple[int | float, ...] | None
+        Spacing of the array. If None, reads from src_zarr.
         Default is None.
-    dtype: Any | None
-        Data type of the saved zarr array. This casts the array to specified dtype
-        while saving it. If None, uses the array dtype. Default is None.
-    shape: tuple[int] | None
-        Zarr array shape. If None, uses the input array shape. Default is None.
-    processing: ProcessingStep| list[ProcessingStep] | list[dict] | dict | None
-        Sequential processing steps done on the array, as a single or a list of
-        ProcessingStep instances. Input by dictionaries is kept for compatibility.
-        The function tries to read the previous processing of the source array by
-        reading src_zarr.attrs["processing] and appends processing to this list.
-        If None, processing will be an empty list. Default is None.
-    inputs: list[str] | None
-        Paths to the input array(s). If None, uses the path to src_array if supplied.
-        Default is None.
-    zarr_chunks: tuple[int] | None
-        Chunks of the saved zarr array. It should have the same length as the array
-        dimensions. If None, uses src_array chunks. Default is None.
+    processing : ProcessingStep | list[ProcessingStep] | list[dict] | dict | None
+        Processing steps to append to the existing processing history from
+        src_zarr. Default is None.
+    inputs : list[str] | None
+        Paths to input arrays. If None, uses src_zarr path. Default is None.
 
     Raises
     ------
     ValueError
-        If spacing is None and src_zarr is None: spacing should be specified, or a
-        valid src_zarr should be passed.
-    ValueError
-        If src_zarr doesn't have a spacing attribute.
-    ValueError
-        If zarr_chunks is None and src_zarr is None: zarr_chunks should be specified,
-        or a valid src_zarr should be passed.
+        If spacing is None and src_zarr is None or has no spacing attribute.
     """
-
-    if not isinstance(root, zarr.Group):
-        root = zarr.open_group(root, mode="a")
-
-    group_path = str(Path(dst_path).parent)
-
     if not spacing:
         if src_zarr:
             spacing = src_zarr.attrs.get("spacing")
@@ -204,37 +234,8 @@ def write_zarr(
         else:
             raise ValueError("Spacing must be specified if src_zarr is None.")
 
-    if not zarr_chunks:
-        if src_zarr:
-            zarr_chunks = src_zarr.chunks
-        else:
-            raise ValueError("Zarr chunks must be specified if src_zarr is None.")
+    src_processing = src_zarr.attrs.get("processing", []) if src_zarr else []
 
-    compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    dst_zarr = root.require_array(
-        dst_path,
-        shape=shape if shape else array.shape,
-        chunks=zarr_chunks,
-        compressors=compressor,
-        dtype=dtype if dtype else array.dtype,
-        overwrite=True,
-    )
-
-    if isinstance(array, np.ndarray):
-        dst_zarr[...] = array
-    elif isinstance(array, da.Array):
-        with ProgressBar():
-            array.to_zarr(dst_zarr)
-    else:
-        raise TypeError(f"Unsuppored type {type(array)} for input array")
-
-    # Update default processing and inputs
-    if src_zarr:
-        src_processing = src_zarr.attrs.get("processing", [])
-    else:
-        src_processing = []
-
-    # Ensure that processing is a list with appropriate formatting
     if not processing:
         processing = []
     elif not isinstance(processing, list):
@@ -244,13 +245,86 @@ def write_zarr(
         for step in processing
     ]
 
-    if not inputs and src_zarr:
-        inputs = [src_zarr.path]
-    else:
-        inputs = []
+    inputs = [src_zarr.path] if (not inputs and src_zarr) else (inputs or [])
 
     dst_zarr.attrs["spacing"] = spacing
     dst_zarr.attrs["processing"] = src_processing + processing
     dst_zarr.attrs["inputs"] = inputs
 
+    group_path = str(Path(dst_zarr.path).parent)
     create_ome_multiscales(root.get(group_path))
+
+
+def write_zarr(
+    root: zarr.Group | Path | str,
+    array: np.ndarray | da.Array,
+    dst_path: str,
+    src_zarr: zarr.Array | None = None,
+    spacing: tuple[int | float, ...] | None = None,
+    dtype: Any | None = None,
+    shape: tuple[int, ...] | None = None,
+    processing: ProcessingStep | list[ProcessingStep] | list[dict] | dict | None = None,
+    inputs: list[str] | None = None,
+    zarr_chunks: tuple[int, ...] | None = None,
+) -> None:
+    """Write a numpy or dask array to zarr with metadata.
+
+    Parameters
+    ----------
+    root : zarr.Group | Path | str
+        Root zarr group, or path to one.
+    array : np.ndarray | da.Array
+        Array to save. Axis order should be (CZ)YX.
+    dst_path : str
+        Path under root where to save the array.
+    src_zarr : zarr.Array | None
+        Source zarr array. Used to read spacing, chunks, previous processing,
+        and inputs if not explicitly provided. Default is None.
+    spacing : tuple[int | float, ...] | None
+        Spacing of the array. If None, reads from src_zarr. Default is None.
+    dtype : Any | None
+        dtype to cast to when saving. If None, uses array dtype. Default is None.
+    shape : tuple[int, ...] | None
+        Zarr array shape. If None, uses array shape. Default is None.
+    processing : ProcessingStep | list[ProcessingStep] | list[dict] | dict | None
+        Processing steps to append to src_zarr processing history.
+        Default is None.
+    inputs : list[str] | None
+        Paths to input arrays. If None, uses src_zarr path. Default is None.
+    zarr_chunks : tuple[int, ...] | None
+        Chunk shape. If None, reads from src_zarr. Default is None.
+
+    Raises
+    ------
+    ValueError
+        If zarr_chunks is None and src_zarr is None.
+    ValueError
+        If spacing is None and src_zarr is None or has no spacing attribute.
+    TypeError
+        If array is neither a numpy nor a dask array.
+    """
+    if not isinstance(root, zarr.Group):
+        root = zarr.open_group(root, mode="a")
+
+    if not zarr_chunks:
+        if src_zarr:
+            zarr_chunks = src_zarr.chunks
+        else:
+            raise ValueError("zarr_chunks must be specified if src_zarr is None.")
+
+    dst_zarr = _create_zarr_array(
+        root=root,
+        dst_path=dst_path,
+        shape=shape if shape else array.shape,
+        chunks=zarr_chunks,
+        dtype=dtype if dtype else array.dtype,
+    )
+    _write_zarr_data(dst_zarr, array)
+    _write_zarr_metadata(
+        root=root,
+        dst_zarr=dst_zarr,
+        src_zarr=src_zarr,
+        spacing=spacing,
+        processing=processing,
+        inputs=inputs,
+    )
