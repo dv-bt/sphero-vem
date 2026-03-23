@@ -63,6 +63,10 @@ mkdocs-section-index = "^0.3.9"
 pymdown-extensions = "^10.12"
 
 
+
+[tool.poetry.group.napari.dependencies]
+napari = {extras = ["pyqt6"], version = "^0.6.6"}
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
