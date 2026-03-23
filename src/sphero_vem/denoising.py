@@ -3,7 +3,7 @@ Functions for denoising images, based on Careamics.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, ClassVar
 from dataclasses import dataclass, field
 from tqdm import tqdm
 import numpy as np
@@ -13,7 +13,7 @@ from sklearn.model_selection import train_test_split
 import torch
 from careamics import CAREamist, Configuration
 from careamics.config import create_n2v_configuration
-from sphero_vem.io import write_zarr
+from sphero_vem.io import write_zarr, _create_zarr_array, _write_zarr_metadata
 from sphero_vem.utils import (
     timestamp,
     BaseConfig,
@@ -96,7 +96,7 @@ class DenoisingConfig(BaseConfig):
 
 
 def train_n2v(config: DenoisingConfig) -> None:
-    """Train Noise2Void using the parameters specifed in config."""
+    """Train Noise2Void using the parameters specified in config."""
     root = zarr.open_group(config.root_path, mode="r")
     src_array = root.get(config.src_path)
 
@@ -134,9 +134,26 @@ def _load_model(
     model_name: str,
     model_root: Path = Path("data/models/n2v"),
     suppress_pbar: bool = True,
-) -> None:
-    """Load N2V model with the specified name. This function expects to find only one
-    best checkpoint. If multiple are present, it will just return the first found."""
+) -> CAREamist:
+    """Load N2V model with the specified name.
+
+    Expects exactly one best checkpoint. If multiple are present, returns
+    the first found after sorting.
+
+    Parameters
+    ----------
+    model_name : str
+        Name of the model to load.
+    model_root : Path
+        Root directory containing trained models. Default is Path("data/models/n2v").
+    suppress_pbar : bool
+        If True, suppress progress bars during prediction. Default is True.
+
+    Returns
+    -------
+    CAREamist
+        Loaded CAREamist model.
+    """
     ckpt_dir = model_root / f"{model_name}/checkpoints"
     model_path = sorted(ckpt_dir.glob(f"{model_name}*.ckpt"))[0]
     careamist = CAREamist(model_path)
@@ -145,7 +162,6 @@ def _load_model(
     careamist.trainer.loggers = []
     careamist.trainer.logger = None
 
-    # Suppress progress bars
     if suppress_pbar:
         careamist.trainer.callbacks = []
 
@@ -153,15 +169,62 @@ def _load_model(
 
 
 @dataclass
-class IntermediateStats:
-    """Container for statistics accumulated during processing."""
+class DenoisingStats:
+    """Statistics accumulated during the denoising pass.
+
+    Tracks global intensity range of the denoised output and the residual
+    histogram (original - denoised) in the original intensity space, before
+    any rescaling.
+
+    Parameters
+    ----------
+    global_min : float
+        Running minimum of denoised float32 values across all slices.
+    global_max : float
+        Running maximum of denoised float32 values across all slices.
+    residual_counts : np.ndarray
+        Histogram counts of shape (511,), covering residuals in [-255, 255].
+
+    Notes
+    -----
+    Residuals are computed as original (uint8) - denoised (float32), rounded
+    and clipped to [-255, 255]. A well-behaved residual histogram should be
+    approximately zero-mean and Gaussian. A small negative bias is expected
+    due to N2V's blind-spot averaging.
+    """
+
+    RESIDUAL_MIN: ClassVar[int] = -255
+    RESIDUAL_MAX: ClassVar[int] = 255
+    RESIDUAL_BINS: ClassVar[int] = 511
+    BIN_CENTERS: ClassVar[np.ndarray] = np.arange(-255, 256)
 
     global_min: float = float("inf")
     global_max: float = float("-inf")
+    residual_counts: np.ndarray = field(
+        default_factory=lambda: np.zeros(511, dtype=np.int64)
+    )
 
-    def update(self, array):
-        self.global_min = min(self.global_min, float(array.min()))
-        self.global_max = max(self.global_max, float(array.max()))
+    def update(self, original: np.ndarray, denoised: np.ndarray) -> None:
+        """Update statistics with a new slice.
+
+        Parameters
+        ----------
+        original : np.ndarray
+            Original uint8 image.
+        denoised : np.ndarray
+            Denoised float32 image, before any rescaling.
+        """
+        self.global_min = min(self.global_min, float(denoised.min()))
+        self.global_max = max(self.global_max, float(denoised.max()))
+        residual = np.clip(
+            np.round(original.astype(np.float32) - denoised),
+            self.RESIDUAL_MIN,
+            self.RESIDUAL_MAX,
+        ).astype(np.int16)
+        self.residual_counts += np.bincount(
+            residual.ravel() - self.RESIDUAL_MIN,
+            minlength=self.RESIDUAL_BINS,
+        )
 
 
 def denoise_image(
@@ -172,6 +235,7 @@ def denoise_image(
     batch_size: int,
     num_workers: int,
     rescale: bool = False,
+    stats: DenoisingStats | None = None,
 ) -> np.ndarray:
     """Denoise a single YX image.
 
@@ -190,8 +254,12 @@ def denoise_image(
     num_workers : int
         Number of dataloader workers.
     rescale : bool
-        If True, rescale denoised output to uint8 [0, 255] using min/max.
+        If True, rescale denoised output to uint8 [0, 255] using per-slice min/max.
         Default is False.
+    stats : DenoisingStats | None
+        If provided, updated in-place with global min/max and residual histogram.
+        Stats are accumulated from the float32 denoised image before rescaling.
+        Default is None.
 
     Returns
     -------
@@ -207,6 +275,9 @@ def denoise_image(
             batch_size=batch_size,
             dataloader_params={"num_workers": num_workers},
         )[0]
+
+    if stats is not None:
+        stats.update(image, denoised)
 
     if rescale:
         img_min = denoised.min()
@@ -236,8 +307,8 @@ def denoise_stack(
     """Denoise volume with Noise2Void and rescale to uint8.
 
     Performs denoising with either global or per-slice intensity rescaling.
-    Global rescaling uses two-pass processing with a temporary zarr. Per-slice
-    rescaling processes each slice independently without intermediate storage.
+    Both modes accumulate a residual histogram saved as an npz file alongside
+    the output zarr.
 
     Parameters
     ----------
@@ -262,34 +333,43 @@ def denoise_stack(
         Overlap in pixels (Y, X) between adjacent tiles to avoid boundary
         artifacts. Default is (48, 48).
     batch_size : int
-        Number of tiles to process in parallel on the GPU.
-        Default is 64.
+        Number of tiles to process in parallel on the GPU. Default is 64.
     num_workers : int
-        Number of dataloader workers for tile loading.
-        Default is 16.
+        Number of dataloader workers for tile loading. Default is 16.
     temp_dir : Path | str | None
         Directory for intermediate float32 zarr storage. Only used when
         `rescale_mode='global'`. Should be on fast local storage (SSD).
         Default is Path("data/tmp").
     rescale_mode : Literal["per_slice", "global"]
-        If `'global'`, use global min/max across all slices for rescaling (two-pass).
-        If `'per_slice'`, rescale each slice independently using per-slice min/max.
+        If `'global'`, use global min/max across all slices for rescaling
+        (two-pass, requires temporary zarr storage).
+        If `'per_slice'`, rescale each slice independently using per-slice
+        min/max (single-pass, no temporary storage).
         Default is `'per_slice'`.
 
     Notes
     -----
     When `rescale_mode='global'`, the intermediate zarr is uncompressed and
     can be large (4 bytes per voxel). Ensure sufficient disk space in `temp_dir`.
+    The residual histogram is saved to
+    `{root_path}/images/tables/denoised-residual-hist.npz`.
     """
     torch.set_float32_matmul_precision("high")
 
     root = zarr.open_group(root_path, mode="a")
     src_zarr = root.get(src_path)
 
-    config = DenoisingConfig.from_json(model_root / f"{model_name}/config.json")
+    config = None
+    try:
+        config = DenoisingConfig.from_json(model_root / f"{model_name}/config.json")
+    except FileNotFoundError:
+        pass
     careamist = _load_model(model_name=model_name, model_root=model_root)
 
     dst_path = f"{dst_group}/{dirname_from_spacing(src_zarr.attrs['spacing'])}"
+
+    hist_path = root_path / "images/tables/denoised-residual-hist.npz"
+    hist_path.parent.mkdir(exist_ok=True, parents=True)
 
     if rescale_mode == "global":
         _denoise_global_rescale(
@@ -303,6 +383,7 @@ def denoise_stack(
             batch_size=batch_size,
             num_workers=num_workers,
             temp_dir=temp_dir,
+            hist_path=hist_path,
         )
     elif rescale_mode == "per_slice":
         _denoise_per_slice_rescale(
@@ -315,6 +396,7 @@ def denoise_stack(
             tile_overlap=tile_overlap,
             batch_size=batch_size,
             num_workers=num_workers,
+            hist_path=hist_path,
         )
     else:
         raise ValueError(
@@ -323,20 +405,65 @@ def denoise_stack(
         )
 
 
+def _save_residual_histogram(stats: DenoisingStats, hist_path: Path) -> None:
+    """Save residual histogram counts and bin centers to an npz file.
+
+    Parameters
+    ----------
+    stats : DenoisingStats
+        Accumulated denoising statistics.
+    hist_path : Path
+        Output path for the npz file.
+    """
+    np.savez(
+        hist_path,
+        counts=stats.residual_counts,
+        bin_centers=stats.BIN_CENTERS,
+    )
+
+
 def _denoise_global_rescale(
-    src_zarr,
-    careamist,
-    root,
+    src_zarr: zarr.Array,
+    careamist: CAREamist,
+    root: zarr.Group,
     dst_path: str,
-    config,
+    config: DenoisingConfig | None,
     tile_size: tuple[int, int],
     tile_overlap: tuple[int, int],
     batch_size: int,
     num_workers: int,
     temp_dir: Path | str | None,
+    hist_path: Path,
 ) -> None:
-    """Two-pass denoising with global rescaling."""
-    stats = IntermediateStats()
+    """Two-pass denoising with global rescaling.
+
+    Parameters
+    ----------
+    src_zarr : zarr.Array
+        Source zarr array.
+    careamist : CAREamist
+        Trained CAREamist model.
+    root : zarr.Group
+        Root zarr group.
+    dst_path : str
+        Destination path within the zarr archive.
+    config : DenoisingConfig | None
+        Denoising configuration. If None, denoising training steps will not be written
+        in the zarr metadata.
+    tile_size : tuple[int, int]
+        Tile size in pixels (Y, X).
+    tile_overlap : tuple[int, int]
+        Overlap in pixels (Y, X) between tiles.
+    batch_size : int
+        Number of tiles to process in parallel.
+    num_workers : int
+        Number of dataloader workers.
+    temp_dir : Path | str | None
+        Directory for intermediate float32 zarr storage.
+    hist_path : Path
+        Output path for the residual histogram npz file.
+    """
+    stats = DenoisingStats()
 
     with temporary_zarr(
         shape=src_zarr.shape,
@@ -344,7 +471,7 @@ def _denoise_global_rescale(
         dtype=np.float32,
         dir=temp_dir,
     ) as intermediate:
-        # Pass 1: Denoise and accumulate stats
+        # Pass 1: Denoise, accumulate stats, store float32
         for z in tqdm(range(src_zarr.shape[0]), desc="Denoising"):
             denoised = denoise_image(
                 src_zarr[z],
@@ -353,11 +480,11 @@ def _denoise_global_rescale(
                 tile_overlap=tile_overlap,
                 batch_size=batch_size,
                 num_workers=num_workers,
+                stats=stats,
             )
-            stats.update(denoised)
             intermediate[z] = denoised
 
-        # Pass 2: Rescale and cast to uint8
+        # Pass 2: Rescale globally and cast to uint8
         intermediate_dask = da.from_zarr(intermediate)
         rescaled = (
             (
@@ -369,8 +496,10 @@ def _denoise_global_rescale(
             .astype(np.uint8)
         )
 
-        processing = [
-            ProcessingStep.from_config("denosing-train", config),
+        processing = []
+        if config is not None:
+            processing.append(ProcessingStep.from_config("denoising-train", config))
+        processing.append(
             ProcessingStep.manual(
                 "denoising-predict",
                 {
@@ -381,7 +510,7 @@ def _denoise_global_rescale(
                     "rescale_mode": "global",
                 },
             ),
-        ]
+        )
 
         write_zarr(
             root=root,
@@ -392,41 +521,53 @@ def _denoise_global_rescale(
             processing=processing,
         )
 
+    _save_residual_histogram(stats, hist_path)
+
 
 def _denoise_per_slice_rescale(
-    src_zarr,
-    careamist,
-    root,
+    src_zarr: zarr.Array,
+    careamist: CAREamist,
+    root: zarr.Group,
     dst_path: str,
-    config,
+    config: DenoisingConfig | None,
     tile_size: tuple[int, int],
     tile_overlap: tuple[int, int],
     batch_size: int,
     num_workers: int,
+    hist_path: Path,
 ) -> None:
-    """Single-pass denoising with per-slice rescaling."""
+    """Single-pass denoising with per-slice rescaling.
 
-    # Create dask array from source
-    src_dask = da.from_zarr(src_zarr)
+    Parameters
+    ----------
+    src_zarr : zarr.Array
+        Source zarr array.
+    careamist : CAREamist
+        Trained CAREamist model.
+    root : zarr.Group
+        Root zarr group.
+    dst_path : str
+        Destination path within the zarr archive.
+    config : DenoisingConfig | None
+        Denoising configuration. If None, denoising training steps will not be written
+        in the zarr metadata.
+    tile_size : tuple[int, int]
+        Tile size in pixels (Y, X).
+    tile_overlap : tuple[int, int]
+        Overlap in pixels (Y, X) between tiles.
+    batch_size : int
+        Number of tiles to process in parallel.
+    num_workers : int
+        Number of dataloader workers.
+    hist_path : Path
+        Output path for the residual histogram npz file.
+    """
+    stats = DenoisingStats()
 
-    # Apply denoising and rescaling per slice along Z axis
-    rescaled = da.map_blocks(
-        lambda img: denoise_image(
-            img,
-            careamist,
-            tile_size=tile_size,
-            tile_overlap=tile_overlap,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            rescale=True,
-        ),
-        src_dask,
-        chunks=(1, *src_zarr.shape[1:]),
-        dtype=np.uint8,
-    )
-
-    processing = [
-        ProcessingStep.from_config("denosing-train", config),
+    processing = []
+    if config is not None:
+        processing.append(ProcessingStep.from_config("denoising-train", config))
+    processing.append(
         ProcessingStep.manual(
             "denoising-predict",
             {
@@ -435,13 +576,40 @@ def _denoise_per_slice_rescale(
                 "rescale_mode": "per_slice",
             },
         ),
-    ]
+    )
 
-    write_zarr(
+    dst_zarr = _create_zarr_array(
         root=root,
-        array=rescaled,
         dst_path=dst_path,
-        src_zarr=src_zarr,
+        shape=src_zarr.shape,
+        chunks=src_zarr.chunks,
         dtype=np.uint8,
+    )
+
+    for z in tqdm(range(src_zarr.shape[0]), desc="Denoising"):
+        image = src_zarr[z]
+        denoised = denoise_image(
+            image,
+            careamist,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            stats=stats,
+        )
+        img_min = denoised.min()
+        img_max = denoised.max()
+        dst_zarr[z] = (
+            ((denoised - img_min) / (img_max - img_min) * 255)
+            .clip(0, 255)
+            .astype(np.uint8)
+        )
+
+    _write_zarr_metadata(
+        root=root,
+        dst_zarr=dst_zarr,
+        src_zarr=src_zarr,
         processing=processing,
     )
+
+    _save_residual_histogram(stats, hist_path)
