@@ -2,17 +2,24 @@
 Functions for denoising images, based on Careamics.
 """
 
+import warnings
 from pathlib import Path
 from typing import Literal, ClassVar
 from dataclasses import dataclass, field
+
 from tqdm import tqdm
 import numpy as np
 import zarr
 import dask.array as da
 from sklearn.model_selection import train_test_split
+
 import torch
+from torch import nn
+
 from careamics import CAREamist, Configuration
-from careamics.config import create_n2v_configuration
+from careamics.config import create_n2v_configuration, UNetConfig
+from careamics.models.layers import Conv_Block
+
 from sphero_vem.io import write_zarr, _create_zarr_array, _write_zarr_metadata
 from sphero_vem.utils import (
     timestamp,
@@ -130,6 +137,88 @@ def train_n2v(config: DenoisingConfig) -> None:
     careamist.train(train_source=train_data, val_source=val_data)
 
 
+def _patch_decoder_blocks(unet: nn.Module, unet_cfg: UNetConfig) -> None:
+    """Patch UnetDecoder.decoder_blocks in-place to match CAREamics 0.0.10 architecture.
+
+    In older versions of Careamics (at least <=0.0.10), decoder Conv_Blocks receive
+    concatenated skip connections as input, producing different input channel counts.
+    This function rebuilds only the decoder_blocks ModuleList with the old channel
+    arithmetic, leaving the bottleneck, upsampling, and final conv untouched.
+    This is intended to allow running older N2V models on the newer versions of the
+    library, new models should be trained using the standard Careamics API.
+
+    Parameters
+    ----------
+    unet : nn.Module
+        UNet instance loaded with the current CAREamics version.
+    unet_cfg : UNetConfig
+        UNet configuration from the CAREamics checkpoint.
+    """
+    depth = unet_cfg.depth
+    num_channels_init = unet_cfg.num_channels_init
+    conv_dim = unet_cfg.conv_dims
+    use_batch_norm = unet_cfg.use_batch_norm
+    groups = unet_cfg.in_channels if unet_cfg.independent_channels else 1
+
+    upsampling = nn.Upsample(
+        scale_factor=2, mode="bilinear" if conv_dim == 2 else "trilinear"
+    )
+
+    decoder_blocks: list[nn.Module] = []
+    for n in range(depth):
+        decoder_blocks.append(upsampling)
+        in_channels = (num_channels_init * 2 ** (depth - n)) * groups
+        out_channels = in_channels // 2
+        decoder_blocks.append(
+            Conv_Block(
+                conv_dim,
+                in_channels=(in_channels + in_channels // 2 if n > 0 else in_channels),
+                out_channels=out_channels,
+                intermediate_channel_multiplier=2,
+                dropout_perc=0.0,
+                activation="ReLU",
+                use_batch_norm=use_batch_norm,
+                groups=groups,
+            )
+        )
+
+    unet.decoder.decoder_blocks = nn.ModuleList(decoder_blocks)
+
+
+def _load_old_model(model_path: Path) -> CAREamist:
+    """Load N2V trained with older versions of Careamics (<=0.0.10)
+
+    Parameters
+    ----------
+    model_path : Path
+        Path to the checkpoint
+
+    Returns
+    -------
+    CAREamist
+        Loaded CAREamist model.
+    """
+
+    ckpt = torch.load(model_path, map_location="cpu")
+    cfg = Configuration.model_validate(ckpt["hyper_parameters"])
+    unet_cfg = cfg.algorithm_config.model
+
+    # Patch data_type for array-based prediction
+    cfg.data_config.data_type = "array"
+
+    careamist = CAREamist(cfg)
+
+    _patch_decoder_blocks(unet=careamist.model.model, unet_cfg=unet_cfg)
+    unet_state_dict = {
+        k.removeprefix("model."): v
+        for k, v in ckpt["state_dict"].items()
+        if k.startswith("model.")
+    }
+    careamist.model.model.load_state_dict(unet_state_dict)
+
+    return careamist
+
+
 def _load_model(
     model_name: str,
     model_root: Path = Path("data/models/n2v"),
@@ -156,7 +245,14 @@ def _load_model(
     """
     ckpt_dir = model_root / f"{model_name}/checkpoints"
     model_path = sorted(ckpt_dir.glob(f"{model_name}*.ckpt"))[0]
-    careamist = CAREamist(model_path)
+    try:
+        careamist = CAREamist(model_path)
+    except RuntimeError:
+        print(
+            "Model architecture incopatible with current Careamics version.\n"
+            "Attempting to load model with Careamics v0.0.10 UNet architecture"
+        )
+        careamist = _load_old_model(model_path)
 
     # Suppress logging predictions to WandB
     careamist.trainer.loggers = []
@@ -266,15 +362,22 @@ def denoise_image(
     np.ndarray
         Denoised image. If rescale=True, returns uint8, otherwise float32.
     """
-    with suppress_logging():
-        denoised = careamist.predict(
-            source=image,
-            tile_size=tile_size,
-            tile_overlap=tile_overlap,
-            axes="YX",
-            batch_size=batch_size,
-            dataloader_params={"num_workers": num_workers},
-        )[0]
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*predict_dataloader.*num_workers.*",
+            category=UserWarning,
+        )
+        with suppress_logging():
+            denoised = careamist.predict(
+                source=image,
+                tile_size=tile_size,
+                tile_overlap=tile_overlap,
+                axes="YX",
+                data_type="array",
+                batch_size=batch_size,
+                dataloader_params={"num_workers": num_workers},
+            )[0]
 
     if stats is not None:
         stats.update(image, denoised)
