@@ -156,7 +156,7 @@ def _create_zarr_array(
         Created zarr array, compressed with zstd and bitshuffle.
     """
     compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-    return root.require_array(
+    return root.create_array(
         dst_path,
         shape=shape,
         chunks=chunks,
