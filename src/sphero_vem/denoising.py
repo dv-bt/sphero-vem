@@ -377,7 +377,7 @@ def denoise_image(
                 data_type="array",
                 batch_size=batch_size,
                 dataloader_params={"num_workers": num_workers},
-            )[0]
+            )[0].squeeze()
 
     if stats is not None:
         stats.update(image, denoised)
