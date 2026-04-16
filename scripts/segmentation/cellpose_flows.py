@@ -18,17 +18,14 @@ def main():
             "augment": True,
             "flow3D_smooth": 3,
             "decompose_flows": False,
-            "median_filter_cellprob": False,
-            "guided_filter_cellprob": True,
-            "guided_filter_radius": 8,
-            "guided_filter_eps": 0.01,
+            "median_filter_cellprob": True,
+            "guided_filter_cellprob": False,
         },
         "nuclei": {
             "model": "cellposeSAM-nuclei-20260223_103423",
             "decompose_flows": True,
-            "median_filter_cellprob": False,
-            "guided_filter_cellprob": True,
-            "guided_filter_eps": 0.001,
+            "median_filter_cellprob": True,
+            "guided_filter_cellprob": False,
         },
     }
     spacing_dir = "100-100-100"
@@ -43,6 +40,8 @@ def main():
             decompose_flows=params["decompose_flows"],
             tile_overlap=0.3,
             batch_size=64,
+            median_filter_cellprob=params["median_filter_cellprob"],
+            guided_filter_cellprob=params["guided_filter_cellprob"],
         )
         calculate_flows(config)
         torch.cuda.empty_cache()
