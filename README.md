@@ -44,17 +44,17 @@ Full documentation is available at [link].
 
 ## Dataset and model weights
 
-The annotated SBF-SEM dataset used to develop this pipeline is available at BioImage Archive ([accession]). Fine-tuned Cellpose-SAM model weights are available at Zenodo ([DOI]).
+The annotated SBF-SEM dataset used to develop this pipeline is available at BioImage Archive (https://doi.org/10.6019/S-BIAD3263). Fine-tuned Cellpose-SAM model weights are available at Zenodo ([DOI]).
 
 ## Citation
 
 If you use this library, please cite the accompanying paper:
 
 ```bibtex
-@article{Bottone2025,
+@article{Bottone2026,
   title   = {3D Reconstruction of Nanoparticle Distribution in Tumor Spheroids with Volume Electron Microscopy},
-  author  = {Bottone, Davide and others},
-  year    = {2025},
+  author  = {Bottone, Davide and coauthors},
+  year    = {2026},
   doi     = {[preprint DOI]}
 }
 ```
