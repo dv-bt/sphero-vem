@@ -22,7 +22,7 @@ While the library was originally developed for SBF-SEM data of nanoparticle-load
 For development:
 
 ```bash
-git clone https://github.com/yourusername/sphero-vem.git
+git clone https://github.com/dv-bt/sphero-vem.git
 cd sphero-vem
 poetry install
 ```
@@ -33,10 +33,6 @@ GPU acceleration (CUDA 12.x, Linux only) is enabled automatically when CuPy and 
 
 - Python 3.11–3.13
 - PyTorch 2.0+
-
-## Documentation
-
-Full documentation is available at [link TDB].
 
 ## Dataset and model weights
 
