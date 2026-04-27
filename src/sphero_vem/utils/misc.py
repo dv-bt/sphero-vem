@@ -7,7 +7,6 @@ import warnings
 import shutil
 from pathlib import Path
 from contextlib import contextmanager
-import os
 import yaml
 import json
 from datetime import datetime
@@ -18,86 +17,6 @@ import numpy as np
 import pandas as pd
 
 
-def get_file_info(filepath: Path, data_root: Path) -> dict:
-    """Get file info and generate hashes. Used for manifest generation"""
-    stat = os.stat(filepath)
-
-    return {
-        "path": str(filepath.relative_to(data_root)),
-        "modified_time": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-    }
-
-
-def read_section_errors(data_dir: Path) -> list[str] | None:
-    """Read tiles with sectioning errors, returns None if there is no file specifying
-    them"""
-    try:
-        with open(data_dir / "folded_section_tiles.txt", "r") as f:
-            return [line.strip() for line in f]
-    except FileNotFoundError:
-        try:
-            manifest = read_manifest(data_dir)
-            return manifest.get("folded_section_tiles")
-        except FileNotFoundError:
-            return
-
-
-def generate_manifest(
-    dataset: str,
-    out_dir: Path,
-    images: list[Path],
-    processing: list[dict],
-    **extra_fields,
-) -> dict:
-    """Generate manifest.yaml file with processing steps and saves it.
-
-    For correct results, this should be called after processing is complete. Output
-    image list is read from the directory and sorted, assuming the ordering is
-    maintained to establish a correspondence.
-
-    Parameters
-    ----------
-    dataset : str
-        The dataset name.
-    out_dir : Path
-        The output directory containing the output images and where the manifest will
-        be saved.
-    images : list[Path]
-        A list containing the input images.
-    processing : list[dict]
-        A list of dictionaries containing the processing steps in the order they were
-        executed. Each dictionary contains the relevant parameters for that processing
-        step, and should contain the key 'step' where the processing step is specifyied
-        with a string.
-
-    Returns
-    -------
-    dict
-        The generate manifest
-    """
-
-    data_dir = images[0].parent
-    data_root = _find_data_root(data_dir)
-    old = read_manifest(data_dir)
-
-    manifest = {
-        "dataset": dataset,
-        "generated_on": datetime.now().isoformat(),
-        "processing": old.get("processing", []) + processing,
-        "inputs": [str(p.relative_to(data_root)) for p in sorted(images)],
-        "outputs": [str(p.name) for p in sorted(out_dir.glob("*.tif"))],
-        **extra_fields,
-    }
-
-    error_tiles = read_section_errors(data_dir)
-    manifest.update({"folded_section_tiles": error_tiles} if error_tiles else {})
-    manifest.update({"discarded": old["discarded"]} if old.get("discarded") else {})
-
-    with open(out_dir / "manifest.yaml", "w") as f:
-        yaml.safe_dump(manifest, f, sort_keys=False)
-    return manifest
-
-
 def read_manifest(data_dir: Path) -> dict:
     """Read manifest in directory"""
     try:
@@ -105,13 +24,6 @@ def read_manifest(data_dir: Path) -> dict:
             return yaml.safe_load(file)
     except FileNotFoundError:
         return {}
-
-
-def _find_data_root(dir: Path) -> Path:
-    """Find absolute path of the data root"""
-    for parent in dir.parents:
-        if parent.name == "data":
-            return parent
 
 
 def vprint(text: str, verbose: bool) -> None:
@@ -132,22 +44,6 @@ def detect_torch_device() -> torch.device:
     elif torch.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
-
-
-def infer_dataset(data_dir: Path) -> str:
-    """Infer dataset name from the name of images in the data directory"""
-    image_name = list(data_dir.glob("*.tif"))[0].name
-    return image_name[: image_name.rfind("-z_")]
-
-
-def get_seg_params(dir: Path) -> dict:
-    """Extract segmentation parameters from the manifest"""
-    manifest = read_manifest(dir)
-    seg_params = {}
-    for step in manifest.get("processing", {}):
-        if step.get("step") == "segmentation":
-            seg_params = step
-    return seg_params
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -229,12 +125,6 @@ def create_ome_multiscales(group: zarr.Group | Path) -> None:
             ],
         }
     ]
-
-
-def spacing_from_dirname(dirname) -> tuple[int, int, int]:
-    """Convenience function to extract spacing from directory name in the format
-    '{spacing_z}-{spacing_y}-{spacing_x}'"""
-    return tuple(int(i) for i in dirname.split("-"))
 
 
 def dirname_from_spacing(spacing: tuple[int, int, int]) -> str:

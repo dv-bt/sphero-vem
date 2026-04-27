@@ -4,13 +4,11 @@ from typing import Any
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
-import torch
 import tifffile
 import zarr
 from zarr.codecs import BloscCodec, BloscShuffle
 import dask.array as da
 from dask.diagnostics import ProgressBar
-from sphero_vem.preprocessing import downscale_tensor
 from sphero_vem.utils import (
     read_manifest,
     create_ome_multiscales,
@@ -33,28 +31,6 @@ def write_image(
     }
     options = {**default_compression, **kwargs} if compressed else {}
     return tifffile.imwrite(fname, image, **options)
-
-
-def read_tensor(
-    image_path: Path,
-    dtype: torch.dtype | None = torch.float32,
-    ds_factor: int = 1,
-    resample_mode: str = "bilinear",
-    return_4d: bool = False,
-) -> torch.Tensor:
-    """Read a tiff image as a pytorch tensor. Returns a tensor of the same shape as
-    the image.
-    If dtype is None, use the original dtype of the image.
-    If ds_factor > 1, applies downscaling by that factor to the image.
-    If return_4d is true, returns a tensor of size 1 x 1 x H x W"""
-    image = tifffile.imread(image_path)
-    image_torch = torch.tensor(image, dtype=dtype)
-    if return_4d:
-        while image_torch.dim() < 4:
-            image_torch = image_torch.unsqueeze(0)
-    if ds_factor > 1:
-        image_torch = downscale_tensor(image_torch, ds_factor, resample_mode)
-    return image_torch
 
 
 def stack_to_zarr(

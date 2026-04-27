@@ -170,3 +170,6 @@ notebooks/paper
 docs/
 mkdocs.yml
 .github/workflows/docs.yml
+
+# Claude Code instructions
+CLAUDE.md

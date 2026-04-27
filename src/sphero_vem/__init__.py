@@ -11,7 +11,6 @@ __version__ = "0.1.0"
 # Core I/O operations
 from .io import (
     write_image,
-    read_tensor,
     stack_to_zarr,
     write_zarr,
 )
@@ -70,7 +69,6 @@ __all__ = [
     "__version__",
     # I/O
     "write_image",
-    "read_tensor",
     "stack_to_zarr",
     "write_zarr",
     # Preprocessing
