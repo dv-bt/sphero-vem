@@ -23,7 +23,49 @@ from sphero_vem.postprocessing import median_filter, guided_filter
 
 @dataclass
 class CellposeFlowConfig(BaseConfig):
-    """Segment a volume stack using cellpose"""
+    """Configuration for Cellpose flow computation on a Zarr volume stack.
+
+    Parameters
+    ----------
+    root_path : Path
+        Root directory of the Zarr archive.
+    model : str
+        Model identifier. Use ``"cpsam"`` for the pretrained Cellpose-SAM
+        model, or a path-encoded custom model name.
+    spacing_dir : str
+        Spacing directory name used to locate the source image array
+        (e.g. ``"100-100-100"``).
+    out_path : Path | None, optional
+        Output Zarr root path. If None, writes under *root_path*.
+    verbose : bool, optional
+        Enable progress messages. Default is True.
+    zarr_chunks : tuple[int] | None, optional
+        Chunk shape for output arrays. If None, inherits source chunks.
+    batch_size : int, optional
+        Inference batch size. Default is 64.
+    flow3D_smooth : int, optional
+        Gaussian smoothing iterations applied to 3D flows. Default is 2.
+    augment : bool, optional
+        Enable test-time augmentation. Default is False.
+    tile_overlap : float, optional
+        Fraction of overlap between inference tiles. Default is 0.3.
+    median_filter_cellprob : bool, optional
+        Apply a 3D median filter to the cellprob map. Default is False.
+    median_filter_size : int, optional
+        Kernel size for the median filter. Default is 3.
+    decompose_flows : bool, optional
+        Apply Helmholtz-Hodge flow decomposition. Default is False.
+    decompose_flows_pad_fraction : float, optional
+        Z-padding fraction for flow decomposition. Default is 0.3.
+    guided_filter_cellprob : bool, optional
+        Apply a guided filter to the cellprob map. Default is False.
+    guided_filter_radius : int, optional
+        Half-window radius for the guided filter. Default is 8.
+    guided_filter_eps : float, optional
+        Regularization parameter for the guided filter. Default is 1e-2.
+    save_raw_flows : bool, optional
+        Save unprocessed flows alongside processed ones. Default is False.
+    """
 
     root_path: Path
     model: str
@@ -64,6 +106,7 @@ class CellposeFlowConfig(BaseConfig):
     )
 
     def __post_init__(self):
+        """Derive ``seg_target``, ``model_dir``, ``src_zarr``, and ``spacing``."""
         # Allow loading pretrained model
         if self.model == "cpsam":
             # Set model_dir as empty path for compatibility with class init
@@ -358,7 +401,50 @@ def calculate_flows(config: CellposeFlowConfig) -> None:
 
 @dataclass
 class CellposeMaskConfig(BaseConfig):
-    """Parameters used to calculate cellpose masks"""
+    """Configuration for generating segmentation masks from Cellpose flows.
+
+    Parameters
+    ----------
+    root_path : Path
+        Root directory of the Zarr archive.
+    seg_target : str
+        Segmentation target name (e.g. ``"cells"`` or ``"nuclei"``).
+    spacing_dir : str, optional
+        Spacing directory that identifies the flow arrays. Default is
+        ``"100-100-100"``.
+    label_root : str | None, optional
+        Optional prefix group path for non-standard label locations within
+        the Zarr archive. Default is None.
+    niter : int, optional
+        Number of Euler integration steps in the flow dynamics solver.
+        Default is 200.
+    cellprob_threshold : float, optional
+        Cellprob logit threshold; voxels below this value are excluded.
+        Default is -0.5.
+    flow_threshold : float, optional
+        Maximum allowed flow error for retaining a mask. Default is 0.4.
+    min_diam : float, optional
+        Minimum object diameter in micrometers used to derive ``min_size``
+        in voxels. Default is 3.
+    expand_labels : bool, optional
+        Expand labels into the foreground mask after mask generation.
+        Default is False.
+    max_expansion_steps : int, optional
+        Maximum dilation iterations for label expansion. Default is 5.
+    merge_masks : bool, optional
+        Merge adjacent under-segmented labels via RAG-based merging.
+        Default is True.
+    gaussian_edge_sigma : float, optional
+        Gaussian sigma for edge map computation during merging. Default 2.0.
+    merge_weight_threshold : float, optional
+        Maximum edge weight for a merge to be accepted. Default is 0.2.
+    merge_contact_threshold : float, optional
+        Minimum relative contact area for a merge to be accepted. Default 0.2.
+    device : str, optional
+        Torch device string for mask generation. Default is ``"cuda"``.
+    zarr_chunks : tuple[int] | None, optional
+        Chunk shape for the output mask array. If None, inherits source chunks.
+    """
 
     root_path: Path
     seg_target: str
@@ -386,6 +472,7 @@ class CellposeMaskConfig(BaseConfig):
     )
 
     def __post_init__(self):
+        """Derive ``spacing``, ``min_size``, ``zarr_chunks``, and ``label_path``."""
         # Celculate min_size in pixel from min_diam in micrometers
         src_zarr = zarr.open_array(
             self.root_path / f"images/{self.spacing_dir}", mode="r"
@@ -416,8 +503,19 @@ class CellposeMaskConfig(BaseConfig):
         )
 
 
-def calculate_masks(config: CellposeMaskConfig):
-    """Calculate segmentation masks using cellpose flows"""
+def calculate_masks(config: CellposeMaskConfig) -> None:
+    """Generate segmentation masks from pre-computed Cellpose flows.
+
+    Loads cellprob and dP arrays from the Zarr archive, runs the Cellpose
+    dynamics solver, applies optional label expansion and RAG-based merging,
+    and writes the final mask array back to the archive.
+
+    Parameters
+    ----------
+    config : CellposeMaskConfig
+        Configuration specifying flow sources, solver parameters, and
+        post-processing options.
+    """
 
     device = torch.device(config.device)
 

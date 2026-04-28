@@ -22,7 +22,22 @@ from sphero_vem.utils import dirname_from_spacing, create_ome_multiscales
 def create_pyramid(
     image: torch.Tensor, num_levels: int, factor: int
 ) -> list[torch.tensor]:
-    """Creates a multi-resolution pyramid for an image tensor."""
+    """Build a multi-resolution image pyramid.
+
+    Parameters
+    ----------
+    image : torch.Tensor
+        Input image tensor at full resolution.
+    num_levels : int
+        Total number of pyramid levels, including the full-resolution image.
+    factor : int
+        Downsampling factor between consecutive levels.
+
+    Returns
+    -------
+    list[torch.Tensor]
+        List of image tensors ordered from coarsest to finest resolution.
+    """
     pyramid = [image]
     for _ in range(num_levels - 1):
         image = resize(image, image.shape[-1] // factor)
@@ -33,7 +48,25 @@ def create_pyramid(
 def downscale_tensor(
     image: torch.Tensor, factor: int, mode: str = "bilinear"
 ) -> torch.tensor:
-    """Dowscales a tensor or a batch of tensors using bilinear interpolation"""
+    """Downscale a tensor or batch of tensors by an integer factor.
+
+    Parameters
+    ----------
+    image : torch.Tensor
+        Input tensor of shape ``(..., H, W)``. Unsqueezed to 4-D internally
+        if necessary before interpolation.
+    factor : int
+        Integer downsampling factor. Output spatial dimensions are
+        ``H // factor`` × ``W // factor``.
+    mode : str, optional
+        Interpolation mode passed to ``torch.nn.functional.interpolate``.
+        Default is ``"bilinear"``. Use ``"nearest"`` for label maps.
+
+    Returns
+    -------
+    torch.Tensor
+        Downscaled tensor with the same number of dimensions as the input.
+    """
     n_dim = image.dim()
     while image.dim() < 4:
         image = image.unsqueeze(0)
@@ -194,7 +227,36 @@ def rechunk_array(
     delete_src: bool = False,
     verbose: bool = True,
 ) -> zarr.Array:
-    """Rechunk a temporary array with arbitrary chunk size to one with dst_chunks"""
+    """Copy a Zarr array to a new path with a different chunk layout.
+
+    Parameters
+    ----------
+    root : zarr.Group
+        Root Zarr group containing the source array.
+    src_array_path : str
+        Path to the source array within *root*.
+    dst_array_path : str
+        Path for the destination array within *root*. Created or overwritten.
+    dst_chunks : tuple[int, int, int], optional
+        Chunk shape for the output array. Default is ``(1, 1024, 1024)``.
+    copy_attributes : bool, optional
+        If True, copy all Zarr attributes from source to destination.
+        Default is True.
+    delete_src : bool, optional
+        If True, delete the source array after copying. Default is False.
+    verbose : bool, optional
+        If True, show a tqdm progress bar. Default is True.
+
+    Returns
+    -------
+    zarr.Array
+        The newly created destination array.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *src_array_path* does not exist within *root*.
+    """
 
     src_zarr: zarr.Array = root.get(src_array_path)
     if src_zarr is None:

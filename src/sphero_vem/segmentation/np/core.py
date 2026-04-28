@@ -141,7 +141,21 @@ class NanoparticleSegmentation:
             json.dump(self.summary_fit, file, indent=4, cls=CustomJSONEncoder)
 
     def _normalize_pmf(self, hist: np.ndarray) -> np.ndarray:
-        """Normalizes a count histogram and adds a tiny floor to avoid divisions by zero"""
+        """Normalize a count histogram to a probability mass function.
+
+        Converts raw counts to a PMF and adds a small floor (``config.eps``)
+        to every bin to avoid division by zero in log-likelihood calculations.
+
+        Parameters
+        ----------
+        hist : numpy.ndarray
+            Integer count histogram of length 256.
+
+        Returns
+        -------
+        numpy.ndarray
+            Normalized PMF of length 256, dtype float64.
+        """
         pmf = hist.astype(np.float64)
         if pmf.sum() == 0:
             return np.full(256, 1 / 256, dtype=np.float64)
@@ -152,7 +166,12 @@ class NanoparticleSegmentation:
         return pmf
 
     def _calc_stack_hist(self) -> None:
-        """Calculate the histogram of the entire stack with the selected sampling step."""
+        """Compute and store the intensity histogram of the full image stack.
+
+        Iterates over slices at intervals of ``config.sampling_step``, accumulates
+        a 256-bin uint8 histogram, normalizes it to a PMF, and stores the results
+        in ``self.hist_stack`` and ``self.p_stack``.
+        """
         hist_stack = np.zeros(256, dtype=np.int64)
         for idx in tqdm(
             range(0, self.volume_stack.shape[0], self.config.sampling_step),
@@ -165,7 +184,12 @@ class NanoparticleSegmentation:
         self.p_stack = self._normalize_pmf(hist_stack)
 
     def _calc_bg_hist(self) -> None:
-        """Calculate background histogram."""
+        """Compute and store the intensity histogram of background pixels.
+
+        Determines intensity thresholds from the stack PMF, then accumulates
+        background pixel counts across sampled slices using ``_extract_bg_hist``.
+        Stores results in ``self.hist_bg`` and ``self.p_bg``.
+        """
 
         hist_bg = np.zeros(256, dtype=np.int64)
         self.th_low = np.searchsorted(
@@ -188,9 +212,24 @@ class NanoparticleSegmentation:
 
     @gpu_dispatch(return_to_host=True)
     def _extract_bg_hist(self, image: ArrayLike) -> ArrayLike | None:
-        """Calculate background histogram with GPU acceleration, if available.
-        If no background found, return 0. This is to keep consistency with background
-        accumulation across slices."""
+        """Extract the background pixel histogram from a single 2D slice.
+
+        Identifies candidate NP regions by intensity thresholding, expands their
+        bounding boxes by a halo, and counts intensity values only in pixels
+        outside those regions (background). Returns None if no background pixels
+        are found.
+
+        Parameters
+        ----------
+        image : ArrayLike
+            Grayscale 2D image slice (uint8).
+
+        Returns
+        -------
+        ArrayLike | None
+            256-bin integer histogram of background pixels, or None if no
+            background was found in this slice.
+        """
 
         def find_objects_cpu(labels: ArrayLike) -> list[tuple[slice]]:
             """scipy.ndimage.find_objects is not yet implemented in cupy.
@@ -220,7 +259,21 @@ class NanoparticleSegmentation:
         return
 
     def _expand_bbox(self, bbox: tuple[slice], image_shape: tuple) -> tuple[slice]:
-        """Expand a ndimage.find_objects bbox by pad pixels controlled by config.halo_pad."""
+        """Expand a ``scipy.ndimage.find_objects`` bounding box by a halo margin.
+
+        Parameters
+        ----------
+        bbox : tuple[slice]
+            Bounding box as returned by ``find_objects`` — a tuple of two
+            slices (Y, X).
+        image_shape : tuple
+            Shape of the 2D image, used to clip the expanded bbox to valid bounds.
+
+        Returns
+        -------
+        tuple[slice]
+            Expanded bounding box clipped to image boundaries.
+        """
         (slice_y, slice_x) = bbox
         y0 = max(slice_y.start - self.config.halo_pad, 0)
         y1 = min(slice_y.stop + self.config.halo_pad, image_shape[0])
@@ -229,17 +282,39 @@ class NanoparticleSegmentation:
         return (slice(y0, y1), slice(x0, x1))
 
     def _init_w_bg(self) -> np.float64:
-        """Initialize w_bg as ratio of background/total pixels"""
+        """Initialize the background mixing weight for the EM algorithm.
+
+        Returns
+        -------
+        numpy.float64
+            Initial ``w_bg`` estimate: ratio of background pixel count to total
+            pixel count across the sampled stack.
+        """
         return self.hist_bg.sum() / self.hist_stack.sum()
 
     def _init_p_np(self) -> np.ndarray:
-        """Initialize NP probability to match tail of stack distribution"""
+        """Initialize the NP probability distribution for the EM algorithm.
+
+        Sets bins below the low-intensity threshold to zero and normalizes the
+        tail of the stack distribution to serve as the initial NP PMF.
+
+        Returns
+        -------
+        numpy.ndarray
+            Initial NP PMF of length 256, concentrated on high-intensity bins.
+        """
         p_np = np.zeros_like(self.p_stack, dtype=np.float64)
         p_np[self.th_low :] = self.p_stack[self.th_low :]
         return self._normalize_pmf(p_np)
 
     def _deconvolve_mixture(self):
-        """Plain EM with tail init for p_obj and 1-D NLL solve for w each M-step."""
+        """Fit the two-component intensity mixture model via EM.
+
+        Runs a plain EM algorithm that alternates between computing posterior
+        responsibilities (E-step) and updating the NP PMF and background weight
+        by minimizing the negative log-likelihood (M-step). Stores the fitted
+        NP PMF in ``self.p_np`` and convergence summary in ``self.summary_fit``.
+        """
 
         # Initialization
         w_bg = self._init_w_bg()
@@ -285,8 +360,21 @@ class NanoparticleSegmentation:
         self._deconvolve_mixture()
 
     def _fit_pi(self, hist_image):
-        """Find mixing weight pi by minimizing negative data log likelihood with beta
-        prior."""
+        """Estimate the per-image NP mixing weight by MAP optimization.
+
+        Minimizes the negative log-likelihood of the observed pixel histogram
+        under the fitted mixture model, regularized by a Beta prior on ``pi``.
+
+        Parameters
+        ----------
+        hist_image : numpy.ndarray
+            256-bin integer histogram of the image to be analyzed.
+
+        Returns
+        -------
+        float
+            MAP estimate of the NP mixing weight ``pi`` in [0, 1].
+        """
 
         def nll_beta_prior(pi):
             mix = pi * self.p_np + (1 - pi) * self.p_bg

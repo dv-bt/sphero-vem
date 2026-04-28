@@ -65,7 +65,23 @@ def _affine_transform(q: torch.Tensor) -> torch.Tensor:
 def _warp_affine(
     img: torch.Tensor, transform_matrix: torch.Tensor, mode: str = "bilinear"
 ) -> torch.Tensor:
-    """Warp and image using an affine transform matrix"""
+    """Warp an image using an affine transform matrix.
+
+    Parameters
+    ----------
+    img : torch.Tensor
+        Input image tensor of shape (N, C, H, W).
+    transform_matrix : torch.Tensor
+        Affine transformation matrix of shape (N, 2, 3).
+    mode : str, optional
+        Interpolation mode for ``F.grid_sample``. Default is ``"bilinear"``.
+
+    Returns
+    -------
+    torch.Tensor
+        Warped image tensor of shape (N, C, H, W). Out-of-bounds pixels are
+        filled with zeros.
+    """
     grid = F.affine_grid(transform_matrix, size=img.shape, align_corners=False)
     return F.grid_sample(
         img, grid, mode=mode, padding_mode="zeros", align_corners=False
@@ -73,22 +89,59 @@ def _warp_affine(
 
 
 def _to_homog(A: torch.Tensor):
-    """Convert a 1x2x3 affine matrix to homogeneous coordinates 1x3x3"""
+    """Convert a (1, 2, 3) affine matrix to homogeneous (1, 3, 3) coordinates.
+
+    Parameters
+    ----------
+    A : torch.Tensor
+        Affine matrix of shape (1, 2, 3).
+
+    Returns
+    -------
+    torch.Tensor
+        Homogeneous matrix of shape (1, 3, 3), with the last row set to
+        [0, 0, 1].
+    """
     A_homog = torch.eye(3).unsqueeze(0)
     A_homog[:, :2, :] = A
     return A_homog
 
 
 def _from_homog(A_homog: torch.Tensor):
-    """Convert a 1x3x3 matrix in homogeneous coordinates to a 1x2x3 matrix"""
+    """Convert a (1, 3, 3) homogeneous matrix back to (1, 2, 3) affine form.
+
+    Parameters
+    ----------
+    A_homog : torch.Tensor
+        Homogeneous matrix of shape (1, 3, 3).
+
+    Returns
+    -------
+    torch.Tensor
+        Affine matrix of shape (1, 2, 3), obtained by dropping the last row.
+    """
     return A_homog[:, :2, :]
 
 
 def _compose_transform(
     A: torch.Tensor, composed_matrices: list[torch.Tensor]
 ) -> torch.Tensor:
-    """Compose current transformtion matrix with previous transformations.
-    It takes the full list to handle edge cases better"""
+    """Compose the current affine matrix with the accumulated transform chain.
+
+    Parameters
+    ----------
+    A : torch.Tensor
+        Current affine matrix of shape (1, 2, 3).
+    composed_matrices : list[torch.Tensor]
+        List of previously composed affine matrices. The last element is
+        used as the preceding transform.
+
+    Returns
+    -------
+    torch.Tensor
+        Composed affine matrix of shape (1, 2, 3). If *composed_matrices* is
+        empty, returns *A* unchanged.
+    """
     try:
         A_previous = _to_homog(composed_matrices[-1])
         A_composed = _to_homog(A) @ A_previous

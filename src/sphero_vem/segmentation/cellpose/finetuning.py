@@ -20,7 +20,31 @@ from sphero_vem.utils import BaseConfig
 
 @dataclass
 class CellposeFinetuneConfig(BaseConfig):
-    """Configuration class for fine-tuning cellpose"""
+    """Configuration for fine-tuning a Cellpose-SAM model.
+
+    Parameters
+    ----------
+    dir_labeled : Path | str
+        Directory containing labeled training images and a ``manifest.json``
+        with ``"spacing"`` and ``"processing"`` keys.
+    learning_rate : float, optional
+        Initial learning rate. Default is 5e-5.
+    batch_size : int, optional
+        Training batch size. Default is 8.
+    n_epochs : int, optional
+        Number of training epochs. Default is 100.
+    test_size : float, optional
+        Fraction of labeled images reserved for testing. Default is 0.2.
+    random_state : int, optional
+        Random seed for the train/test split. Default is 42.
+    seg_target : str, optional
+        Segmentation target: ``"cells"`` or ``"nuclei"``. Default is
+        ``"cells"``.
+    save_predictions : bool, optional
+        Save model predictions on test images after training. Default is False.
+    use_bfloat16 : bool, optional
+        Use bfloat16 mixed precision during training. Default is True.
+    """
 
     dir_labeled: Path | str
     learning_rate: float = 5e-5
@@ -39,7 +63,7 @@ class CellposeFinetuneConfig(BaseConfig):
     spacing: list = field(init=False)
 
     def __post_init__(self):
-        """Load environment variables and init derived values"""
+        """Set ``wandb_project``, ``model_name``, output directories, and ``spacing``."""
         if self.seg_target == "cells":
             self.wandb_project = "cell-segmentation"
         elif self.seg_target == "nuclei":
@@ -62,8 +86,22 @@ def _generate_training_manifest(
     config: CellposeFinetuneConfig,
     train_files: list[Path],
     test_files: list[Path],
-):
-    """Generate training manifest"""
+) -> None:
+    """Write and upload the training manifest JSON.
+
+    Saves a JSON file recording experiment metadata, train/test file lists,
+    and processing history to ``config.dir_experiment``, then uploads it to
+    Weights & Biases.
+
+    Parameters
+    ----------
+    config : CellposeFinetuneConfig
+        Fine-tuning configuration.
+    train_files : list[Path]
+        Paths to training image files.
+    test_files : list[Path]
+        Paths to test image files.
+    """
 
     # Load processing
     with open(config.dir_labeled / "manifest.json") as file:
@@ -91,12 +129,24 @@ def _generate_training_manifest(
 
 
 class _CellposeLogHandler(logging.Handler):
-    """Class that captures cellpose logger and sends info to WandB"""
+    """Logging handler that parses Cellpose training log lines and logs to WandB.
+
+    Intercepts the ``cellpose.train`` logger, extracts epoch/loss/LR values
+    via regex, and forwards them to ``wandb.log``.
+    """
 
     def __init__(self):
+        """Initialize the handler with default logging settings."""
         super().__init__()
 
     def emit(self, record):
+        """Parse a log record and upload matching metrics to Weights & Biases.
+
+        Parameters
+        ----------
+        record : logging.LogRecord
+            Log record from the ``cellpose.train`` logger.
+        """
         message = record.getMessage()
         pattern = r"(\d+), train_loss=([\d\.]+), test_loss=([\d\.]+), LR=([\d\.e\-\+]+)"
         match = re.search(pattern, message)
@@ -118,7 +168,25 @@ class _CellposeLogHandler(logging.Handler):
 
 
 class CellposeLogger:
+    """Context manager for Cellpose training logging via Weights & Biases.
+
+    Initializes a WandB run, attaches a ``_CellposeLogHandler`` to the
+    ``cellpose.train`` logger, and provides cleanup utilities.
+
+    Parameters
+    ----------
+    config : CellposeFinetuneConfig
+        Fine-tuning configuration used to initialize the WandB run.
+    """
+
     def __init__(self, config: CellposeFinetuneConfig) -> None:
+        """Set up WandB and attach the Cellpose log handler.
+
+        Parameters
+        ----------
+        config : CellposeFinetuneConfig
+            Fine-tuning configuration.
+        """
         # Activate Cellpose logging
         io.logger_setup()
         self._init_wandb(config)
@@ -224,7 +292,21 @@ def _load_data(
 
 
 def _labels_path(config: CellposeFinetuneConfig, image_path: Path) -> Path:
-    """Generate expected label path for a given image"""
+    """Construct the expected label file path for a given image.
+
+    Parameters
+    ----------
+    config : CellposeFinetuneConfig
+        Fine-tuning configuration providing ``dir_labeled`` and ``seg_target``.
+    image_path : Path
+        Path to the source image file.
+
+    Returns
+    -------
+    Path
+        Expected path of the corresponding label TIFF under
+        ``config.dir_labeled/labels/``.
+    """
     return config.dir_labeled / f"labels/{image_path.stem}-{config.seg_target}.tif"
 
 

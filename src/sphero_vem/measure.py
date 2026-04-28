@@ -214,7 +214,9 @@ def _calc_sdf(
     Returns
     -------
     ArrayLike
-        The calculated SDF.
+        Signed distance function array with the same shape as *labels*.
+        Values are negative inside the object and positive outside,
+        expressed in the physical units defined by *spacing*.
     """
     mask = labels == label_idx
     sdf = ndi.distance_transform_edt(
@@ -323,6 +325,7 @@ def props_sdf(
         - surface_area_boundary: surface are of the object that is cropped by the
           image boundary.
         - truncation_fraction: surface_area_boundary / surface_area_total.
+        - diam_equiv: diameter of a sphere with equivalent volume.
     ArrayLike
         An array containing the signed distance function (SDF < 0 on the inside).
 
@@ -521,7 +524,18 @@ def _compute_derivatives(
     h: float = 1.0,
 ) -> tuple[ArrayLike, ArrayLike]:
     """
-    Compute gradient and Hessian at surface points.
+    Compute gradient and Hessian of the SDF at surface points.
+
+    Parameters
+    ----------
+    sdf : ArrayLike
+        3-D signed distance function array.
+    voxel_coords : ArrayLike
+        Integer voxel coordinates of surface points, shape (N, 3).
+    spacing : tuple[float, float, float]
+        Physical voxel spacing in ZYX order, used to scale finite differences.
+    h : float, optional
+        Step size (in voxels) for finite-difference stencils. Default is 1.0.
 
     Returns
     -------
@@ -606,7 +620,23 @@ def _compute_curvatures(grad: np.ndarray, hess: np.ndarray) -> tuple[ArrayLike]:
 
 
 def _get_vertex_areas(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
-    """Compute area associated with each vertex (1/3 of adjacent face areas)."""
+    """Compute the area associated with each mesh vertex.
+
+    Each vertex is assigned one-third of the area of each adjacent face
+    (barycentric area weighting).
+
+    Parameters
+    ----------
+    verts : numpy.ndarray
+        Vertex coordinates, shape (V, 3).
+    faces : numpy.ndarray
+        Triangle face indices into *verts*, shape (F, 3).
+
+    Returns
+    -------
+    numpy.ndarray
+        Per-vertex area, shape (V,).
+    """
     v0, v1, v2 = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
     face_areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
 

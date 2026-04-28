@@ -37,7 +37,76 @@ from sphero_vem.registration.cropping import find_border_crop
 
 @dataclass
 class RegistrationConfig(BaseConfig):
-    """Configuration class for zarr-based registration"""
+    """Configuration for pairwise affine registration of a Zarr volume stack.
+
+    Parameters
+    ----------
+    root_path : Path
+        Root directory of the Zarr archive.
+    src_path : str
+        Path within the archive to the source image array (e.g.
+        ``"images/50-10-10"``).
+    dst_group : str, optional
+        Group path under which registered slices are written.
+        Default is ``"images/registered"``.
+    pyramid_levels : int, optional
+        Number of resolution levels in the multi-scale pyramid. Default is 4.
+    pyramid_factors : int | list[int], optional
+        Downsampling factor(s) between pyramid levels. An integer is expanded
+        to ``[factor**(levels-1), ..., factor**0]``. Default is 2.
+    pyramid_epochs : int | list[int], optional
+        Training epochs per pyramid level. A scalar is broadcast to all levels.
+        Default is 300.
+    learning_rate : float | list[float], optional
+        Learning rate per pyramid level. Default is
+        ``[1e-3, 1e-3, 5e-4, 1e-4]``.
+    loss_type : str, optional
+        Name of the image similarity loss (see ``LossDispatcher``).
+        Default is ``"ncc"``.
+    loss_kwargs : dict, optional
+        Extra keyword arguments forwarded to the loss function. Default is
+        ``{}``.
+    optimizer : str, optional
+        Optimizer class name (currently only ``"Adam"`` is used).
+        Default is ``"Adam"``.
+    max_pairs : int | None, optional
+        Maximum number of consecutive slice pairs to register. If None, all
+        pairs in the stack are used. Default is None.
+    progress_steps : bool, optional
+        Show per-step tqdm progress bars. Default is False.
+    verbose : bool, optional
+        Print high-level progress messages. Default is True.
+    early_stopping : bool, optional
+        Enable early stopping when the loss plateaus. Default is True.
+    stop_window : int, optional
+        Rolling window size for early-stopping fluctuation check. Default 15.
+    stop_tol : float, optional
+        Fluctuation tolerance below which training stops. Default is 1e-5.
+    transformation : str, optional
+        Transformation family: ``"similarity"``, ``"rigid"``, or ``"affine"``.
+        Default is ``"similarity"``.
+    init_std : float, optional
+        Standard deviation for random initialization of transform parameters.
+        Default is 0.001.
+    scaling : bool, optional
+        Enable per-axis scaling when ``transformation="affine"``. Default True.
+    shear : bool, optional
+        Enable shear when ``transformation="affine"``. Default is True.
+    regularization_param : float, optional
+        Weight for L2 regularization on non-translation parameters.
+        Default is 0.5.
+    crop_borders : bool, optional
+        Apply border cropping after registration. Default is True.
+    crop_safety_margin : int, optional
+        Extra pixels added to the most restrictive per-slice crop box.
+        Default is 5.
+    crop_stride : int, optional
+        Pixel stride for the coarse crop search. Default is 20.
+    crop_restarts : int, optional
+        Number of random restarts for the crop refinement. Default is 10.
+    n_workers : int, optional
+        Number of Dask threads for writing the output array. Default is 4.
+    """
 
     # Required input/output paths
     root_path: Path
@@ -101,7 +170,11 @@ class RegistrationConfig(BaseConfig):
     }
 
     def __post_init__(self):
-        """Initialize derived values from zarr source"""
+        """Derive runtime fields from the source Zarr array.
+
+        Opens ``src_zarr``, reads spacing, infers ``dst_path``, determines
+        ``num_pairs``, and expands scalar pyramid parameters to per-level lists.
+        """
         self.device = detect_torch_device()
 
         # Open source zarr array
@@ -134,9 +207,35 @@ class RegistrationConfig(BaseConfig):
 
 
 class ImageTransform(torch.nn.Module):
+    """Learnable 2D affine transform module for image registration.
+
+    Parameterizes the transformation as a deviation from the identity so that
+    all learned parameters are zero-centred at initialization.
+
+    Parameters
+    ----------
+    config : RegistrationConfig
+        Registration configuration. Controls which transform components
+        (scaling, shear) are active via ``transformation``, ``scaling``, and
+        ``shear`` fields, and provides the target device.
+    delta_q_init : torch.Tensor | None, optional
+        Initial parameter deviation tensor of shape (1, 6). If None, a
+        zero tensor is used.
+    """
+
     def __init__(
         self, config: RegistrationConfig, delta_q_init: torch.Tensor | None = None
     ):
+        """Initialise parameters and build the active-parameter mask.
+
+        Parameters
+        ----------
+        config : RegistrationConfig
+            Registration configuration.
+        delta_q_init : torch.Tensor | None, optional
+            Initial ``delta_q`` values of shape (1, 6). Default is None
+            (zero-initialized).
+        """
         super().__init__()
         self.delta_q = torch.nn.Parameter(delta_q_init)
         self.q_identity = torch.tensor(
@@ -160,6 +259,18 @@ class ImageTransform(torch.nn.Module):
         ).unsqueeze(0)
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
+        """Apply the current learned transform to *img*.
+
+        Parameters
+        ----------
+        img : torch.Tensor
+            Input image tensor of shape (N, C, H, W).
+
+        Returns
+        -------
+        torch.Tensor
+            Warped image tensor of the same shape as *img*.
+        """
         q = self.delta_q * self.params_mask + self.q_identity
         A = _affine_transform(q)
         return _warp_affine(img, A)
@@ -168,7 +279,24 @@ class ImageTransform(torch.nn.Module):
 def _early_stopping(
     loss_history: list[float], window: int = 20, tol: float = 1e-4
 ) -> bool:
-    """Early stopping criterion"""
+    """Decide whether training should stop based on recent loss fluctuation.
+
+    Parameters
+    ----------
+    loss_history : list[float]
+        Rolling window of recent loss values.
+    window : int, optional
+        Number of steps to consider. Stopping is only triggered once
+        ``len(loss_history) == window``. Default is 20.
+    tol : float, optional
+        Maximum allowed fluctuation (max − min) within the window.
+        Default is 1e-4.
+
+    Returns
+    -------
+    bool
+        True if the loss has converged (fluctuation < *tol*), False otherwise.
+    """
     if len(loss_history) == window:
         fluctuation = max(loss_history) - min(loss_history)
         if fluctuation < tol:
@@ -179,6 +307,30 @@ def _early_stopping(
 def register_image_pair(
     fixed_img: torch.Tensor, moving_img: torch.Tensor, config: RegistrationConfig
 ) -> tuple[torch.Tensor, list[float]]:
+    """Register a moving image to a fixed image using multi-scale gradient descent.
+
+    Optimizes a 2D affine transform at each pyramid level, passing the
+    learned parameters as initialization to the next (finer) level.
+
+    Parameters
+    ----------
+    fixed_img : torch.Tensor
+        Fixed reference image of shape (1, 1, H, W).
+    moving_img : torch.Tensor
+        Moving image to be aligned, same shape as *fixed_img*.
+    config : RegistrationConfig
+        Registration configuration including pyramid settings, optimizer
+        parameters, loss type, and device.
+
+    Returns
+    -------
+    q_final : torch.Tensor
+        Final affine parameter vector of shape (1, 6), as absolute parameters
+        (deviation + identity).
+    full_loss_history : list[list]
+        Per-step loss records as ``[level, loss_value]`` pairs across all
+        pyramid levels.
+    """
     fixed_img = fixed_img.to(config.device)
     moving_img = moving_img.to(config.device)
 
@@ -461,7 +613,21 @@ def register_stack(config: RegistrationConfig) -> None:
 
 
 def _create_log_entry(pair_index: int, loss_history: list[float]) -> dict[str, Any]:
-    """Create entry for registration log in zarr attributes"""
+    """Create a registration log entry for a single slice pair.
+
+    Parameters
+    ----------
+    pair_index : int
+        Index of the fixed slice in the pair (moving slice is ``pair_index + 1``).
+    loss_history : list[float]
+        Per-step loss records for this pair, as ``[level, loss_value]`` pairs.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary with keys ``"pair_index"``, ``"slice_indices"``,
+        ``"final_loss"``, and ``"num_steps_taken"``.
+    """
     return {
         "pair_index": pair_index,
         "slice_indices": [pair_index, pair_index + 1],
@@ -471,6 +637,21 @@ def _create_log_entry(pair_index: int, loss_history: list[float]) -> dict[str, A
 
 
 def _expand_pyramid_list(param: int | list, levels: int) -> list:
+    """Broadcast a scalar pyramid parameter to a per-level list.
+
+    Parameters
+    ----------
+    param : int | float | list
+        Scalar value or already-expanded list.
+    levels : int
+        Number of pyramid levels.
+
+    Returns
+    -------
+    list
+        List of length *levels* with the parameter value repeated, or *param*
+        unchanged if it is already a list.
+    """
     if isinstance(param, int) or isinstance(param, float):
         param = [param for i in range(levels)]
     return param

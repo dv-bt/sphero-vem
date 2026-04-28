@@ -26,10 +26,26 @@ def _merge_by_threshold(
 ) -> np.ndarray:
     """Merge RAG nodes connected by edges that pass both threshold checks.
 
-    An edge is kept (allows merging) when ALL conditions are met:
-    - Neither node is background (label 0)
-    - Relative contact area >= rel_contact_thresh
-    - Edge weight <= weight_thresh
+    An edge triggers a merge when ALL conditions are met: neither node is
+    background (label 0), relative contact area >= *rel_contact_thresh*, and
+    edge weight <= *weight_thresh*.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        Integer label volume.
+    rag : skimage.graph.RAG
+        Region adjacency graph with ``"weight"`` and ``"rel_contact_max"``
+        edge attributes populated.
+    weight_thresh : float
+        Maximum edge weight for merging.
+    rel_contact_thresh : float
+        Minimum relative contact area for merging.
+
+    Returns
+    -------
+    numpy.ndarray
+        Merged label volume with the same shape as *labels*.
     """
     rag_cut = rag.copy()
     to_remove = [
@@ -255,7 +271,33 @@ def _build_wavenumbers(
     dx: float,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build finite-difference wavenumber arrays."""
+    """Build finite-difference wavenumber arrays for a 3D grid.
+
+    Parameters
+    ----------
+    Nz : int
+        Number of grid points along Z.
+    Ny : int
+        Number of grid points along Y.
+    Nx : int
+        Number of grid points along X.
+    dz : float
+        Grid spacing along Z.
+    dy : float
+        Grid spacing along Y.
+    dx : float
+        Grid spacing along X.
+    device : torch.device
+        Device on which to allocate the output tensors.
+
+    Returns
+    -------
+    W_vec : torch.Tensor
+        Stacked wavenumber tensor of shape (3, Nz, Ny, Nx) with components
+        (Wz, Wy, Wx) computed from finite-difference frequencies.
+    W_sq : torch.Tensor
+        Squared wavenumber magnitude tensor of shape (Nz, Ny, Nx).
+    """
 
     freq_z = torch.fft.fftfreq(Nz, d=1.0, device=device)
     freq_y = torch.fft.fftfreq(Ny, d=1.0, device=device)
@@ -278,7 +320,23 @@ def _project_curl_free(
     W_vec: torch.Tensor,
     W_sq: torch.Tensor,
 ) -> torch.Tensor:
-    """Project vector field onto curl-free component in Fourier space."""
+    """Project a vector field onto its curl-free component in Fourier space.
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        3D vector field of shape (3, Nz, Ny, Nx).
+    W_vec : torch.Tensor
+        Wavenumber vector tensor of shape (3, Nz, Ny, Nx), as produced by
+        ``_build_wavenumbers``.
+    W_sq : torch.Tensor
+        Squared wavenumber magnitude of shape (Nz, Ny, Nx).
+
+    Returns
+    -------
+    torch.Tensor
+        Fourier-domain curl-free projection of *input*, shape (3, Nz, Ny, Nx).
+    """
 
     V_hat = torch.fft.fftn(input, dim=(1, 2, 3))
     W_dot_V = torch.sum(W_vec * V_hat, dim=0)

@@ -19,7 +19,20 @@ from sphero_vem.utils.accelerator import (
 
 @gpu_dispatch(return_to_host=True)
 def bincount_ubyte(image: ArrayLike) -> np.ndarray:
-    """Calculates image histogram with GPU acceleration"""
+    """Compute a 256-bin intensity histogram for a uint8 image.
+
+    This function uses GPU acceleration when available.
+
+    Parameters
+    ----------
+    image : ArrayLike
+        Input uint8 image array of any shape.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer histogram of shape (256,) with bin counts per intensity level.
+    """
     return xp.bincount(image.ravel(), minlength=256).astype(xp.int64)
 
 

@@ -50,15 +50,39 @@ def filter_and_relabel(labels: ArrayLike, min_size: int) -> np.ndarray:
 
 @gpu_dispatch(return_to_host=True)
 def binary_closing(binary_image: ArrayLike, radius: int = 1) -> np.ndarray:
-    """Mrophological opening with stucturing element with given connectivity"""
+    """Apply 3D morphological closing with a spherical structuring element.
+
+    Parameters
+    ----------
+    binary_image : ArrayLike
+        Binary 3D input array.
+    radius : int, optional
+        Radius of the ball-shaped structuring element. Default is 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        Binary 3D array after morphological closing.
+    """
     struct = ski.morphology.ball(radius=radius)
     return ndi.binary_closing(binary_image, structure=struct, border_value=0)
 
 
 @gpu_dispatch(return_to_host=True)
 def median_filter(array: ArrayLike, size: int = 3) -> np.ndarray:
-    """
-    Applies a 3D median filter, using GPU acceleration if possible.
+    """Apply a 3D median filter using GPU acceleration if available.
+
+    Parameters
+    ----------
+    array : ArrayLike
+        Input 3D array.
+    size : int, optional
+        Size of the median filter kernel in each dimension. Default is 3.
+
+    Returns
+    -------
+    numpy.ndarray
+        Filtered array of the same shape as *array*.
     """
     cellprob_smoothed = ndi.median_filter(array, size=size, mode="nearest")
     return cellprob_smoothed

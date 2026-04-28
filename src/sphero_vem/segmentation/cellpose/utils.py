@@ -53,7 +53,20 @@ def _calc_foreground(
     cellprob_hr: ArrayLike,
     cellprob_threshold: float,
 ) -> np.ndarray:
-    """Calculate high res mask"""
+    """Threshold a high-resolution cellprob map to produce a binary foreground mask.
+
+    Parameters
+    ----------
+    cellprob_hr : ArrayLike
+        High-resolution cellprob logit array.
+    cellprob_threshold : float
+        Logit value above which a voxel is considered foreground.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean foreground mask with the same shape as *cellprob_hr*.
+    """
     foreground_hr = cellprob_hr > cellprob_threshold
     return foreground_hr
 
@@ -140,7 +153,34 @@ def upsample_masks(
     label_root: str | None = None,
     n_workers: int = 4,
 ) -> None:
-    """Upsample cellpose labels"""
+    """Upsample low-resolution Cellpose labels to a higher-resolution target spacing.
+
+    Reads low-resolution masks and the corresponding high-resolution cellprob
+    array from a Zarr archive, runs region-fill upsampling, and writes the
+    result back to the archive under the target spacing path.
+
+    Parameters
+    ----------
+    root_path : Path
+        Path to the root Zarr archive.
+    seg_target : str
+        Name of the segmentation target (e.g. ``"cells"`` or ``"nuclei"``).
+    target_spacing : tuple[int, float]
+        Target voxel spacing (Z, Y, X) in nanometers.
+    src_spacing : tuple[int, int, int], optional
+        Source (low-resolution) voxel spacing. Default is ``(100, 100, 100)``.
+    erosion_iterations : int, optional
+        Number of erosion steps applied to seeds before zooming. Default is 2.
+    cellprob_threshold : float, optional
+        Logit threshold for the foreground mask. Default is 0.0.
+    store_chunks : tuple[int] | None, optional
+        Chunk shape for the output Zarr array. If None, inherits source chunks.
+    label_root : str | None, optional
+        Optional prefix path for the label group within the archive. If None,
+        labels are read from ``labels/{seg_target}/...``.
+    n_workers : int, optional
+        Number of worker threads for Dask resampling. Default is 4.
+    """
 
     root = zarr.open_group(root_path, mode="a")
     label_path = (
@@ -196,7 +236,24 @@ def upsample_masks(
 
 
 def match_predictions(ground_truth: np.ndarray, predictions: np.ndarray) -> np.ndarray:
-    """Return prediction masks with matched label indices as ground truth"""
+    """Remap predicted label IDs to match ground-truth label IDs.
+
+    Uses Cellpose IoU matching to align predicted labels to ground-truth labels
+    so that paired labels share the same integer ID.
+
+    Parameters
+    ----------
+    ground_truth : numpy.ndarray
+        Integer label array of ground-truth segmentations.
+    predictions : numpy.ndarray
+        Integer label array of predicted segmentations.
+
+    Returns
+    -------
+    numpy.ndarray
+        Relabeled prediction array where matched labels carry the same ID as
+        the corresponding ground-truth label.
+    """
     _, matched = metrics.mask_ious(ground_truth, predictions)
     full_range = np.unique(predictions)[1:]
     missing = np.setdiff1d(full_range, matched).tolist()
@@ -216,8 +273,34 @@ def match_predictions(ground_truth: np.ndarray, predictions: np.ndarray) -> np.n
 def _get_edges_and_nodes(
     labels: ArrayLike, cellprob: ArrayLike, edge_map: ArrayLike
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Finds adjacencies and samples cellprob (logits) and edgemap at the boundaries.
+    """Find adjacencies and sample cellprob and edge values at region boundaries.
+
+    Uses 6-connectivity grey dilation to detect voxels that lie on a boundary
+    between two distinct labels.
+
+    Parameters
+    ----------
+    labels : ArrayLike
+        Integer label volume (0 = background).
+    cellprob : ArrayLike
+        Cellprob logit volume, same shape as *labels*.
+    edge_map : ArrayLike
+        Normalized edge strength map in [0, 1], same shape as *labels*.
+
+    Returns
+    -------
+    labels_a : numpy.ndarray
+        Label IDs on one side of each boundary voxel.
+    labels_b : numpy.ndarray
+        Label IDs on the other side of each boundary voxel.
+    probs : numpy.ndarray
+        Cellprob logit values at boundary voxels.
+    edges : numpy.ndarray
+        Edge map values at boundary voxels.
+    nodes : numpy.ndarray
+        All unique label IDs present in *labels*.
+    counts : numpy.ndarray
+        Voxel count for each unique label in *nodes*.
     """
 
     # Build 6-connectivity element

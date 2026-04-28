@@ -20,9 +20,21 @@ from sphero_vem.utils import (
 def write_image(
     fname: Path, image: np.ndarray, compressed: bool = False, **kwargs
 ) -> None:
-    """Save TIFF images with default zip compression. Compression can be enabled
-    with the compressed argument. This also disables any other optional keyword
-    argument passed"""
+    """Save a NumPy array as a TIFF file, optionally with zlib compression.
+
+    Parameters
+    ----------
+    fname : Path
+        Destination file path.
+    image : numpy.ndarray
+        Image array to save.
+    compressed : bool, optional
+        If True, apply zlib compression (level 6) with tiling. Extra keyword
+        arguments are ignored when compression is enabled. Default is False.
+    **kwargs
+        Additional keyword arguments forwarded to ``tifffile.imwrite`` when
+        *compressed* is False.
+    """
     default_compression = {
         "compression": "zlib",
         "compressionargs": {"level": 6},

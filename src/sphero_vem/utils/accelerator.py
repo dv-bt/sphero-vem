@@ -56,15 +56,39 @@ else:
 
 
 def to_host(arr: ArrayLike) -> npt.NDArray[Any]:
-    """Return a numpy array on host memory, or no operation if already a numpy array."""
+    """Move an array to host (CPU) memory.
+
+    Parameters
+    ----------
+    arr : ArrayLike
+        Input array on any device.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array on host memory. If *arr* is already a NumPy array it is
+        returned via ``np.asarray`` without copying. If CuPy is available
+        and *arr* is a CuPy array, it is copied to host memory.
+    """
     if GPU_AVAILABLE and cp is not None and isinstance(arr, cp.ndarray):
         return cp.asnumpy(arr)  # type: ignore[arg-type]
     return np.asarray(arr)
 
 
 def to_device(arr: ArrayLike) -> ArrayLike:
-    """Return an array on the current device backend. A cp.array if cupy is available,
-    else a numpy array."""
+    """Move an array to the active compute device.
+
+    Parameters
+    ----------
+    arr : ArrayLike
+        Input array, either a NumPy or CuPy ndarray.
+
+    Returns
+    -------
+    ArrayLike
+        CuPy array if GPU is available, NumPy array otherwise. If *arr* is
+        already on the target device it is returned unchanged.
+    """
     if GPU_AVAILABLE and cp is not None:
         if isinstance(arr, cp.ndarray):
             return arr
@@ -73,8 +97,25 @@ def to_device(arr: ArrayLike) -> ArrayLike:
 
 
 def _map_arrays(obj, fn):
-    """Apply fn to arrays inside simple containers (tuple/list/dict). Useful to convert
-    nested data structures to the correct device."""
+    """Apply *fn* to every ndarray inside a nested container.
+
+    Recursively traverses lists, tuples, and dicts. Non-array, non-container
+    values are returned unchanged.
+
+    Parameters
+    ----------
+    obj : Any
+        Object to traverse. May be an ndarray, list, tuple, dict, or any
+        other value.
+    fn : callable
+        Function applied to each ndarray encountered.
+
+    Returns
+    -------
+    Any
+        A new container of the same type as *obj* with *fn* applied to all
+        arrays; scalars and non-array leaves are returned unchanged.
+    """
     if isinstance(obj, (np.ndarray,)) or (
         cp is not None and isinstance(obj, cp.ndarray)
     ):  # type: ignore[name-defined]
@@ -141,7 +182,19 @@ def gpu_dispatch(
 
 
 def da_to_device(x: da.Array) -> da.Array:
-    """Convert Dask array blocks to CuPy or NumPy depending on availability."""
+    """Return a Dask array whose blocks are on the active compute device.
+
+    Parameters
+    ----------
+    x : dask.array.Array
+        Input Dask array with NumPy-backed blocks.
+
+    Returns
+    -------
+    dask.array.Array
+        Dask array with CuPy-backed blocks if GPU is available, otherwise
+        NumPy-backed blocks.
+    """
     if GPU_AVAILABLE and cp is not None:
         meta = cp.empty((0,) * x.ndim, dtype=x.dtype)
     else:
@@ -151,7 +204,19 @@ def da_to_device(x: da.Array) -> da.Array:
 
 
 def da_to_host(x: da.Array) -> da.Array:
-    """Return a Dask array whose blocks are NumPy ndarrays on host memory."""
+    """Return a Dask array whose blocks are NumPy ndarrays on host memory.
+
+    Parameters
+    ----------
+    x : dask.array.Array
+        Input Dask array, potentially with CuPy-backed blocks.
+
+    Returns
+    -------
+    dask.array.Array
+        Dask array with NumPy-backed blocks. If no GPU is available and the
+        array is already NumPy-backed, it is returned unchanged.
+    """
 
     # If there's no GPU / CuPy, just ensure NumPy arrays
     if not (GPU_AVAILABLE and cp is not None):

@@ -231,7 +231,8 @@ def bbox_expand(bbox: tuple[int], margin: int, im_shape: tuple[int]) -> tuple[in
         Constant margin for bounding box expansion. The bounding box will be expanded
         by this value in all directions.
     im_shape : tuple[int]
-        Image shape.
+        Shape of the image array in the same axis order as *bbox*. Used to
+        clip the expanded bounding box so it does not exceed array bounds.
 
     Returns
     -------

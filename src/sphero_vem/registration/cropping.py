@@ -71,8 +71,28 @@ def integral_image(mask: np.ndarray) -> np.ndarray:
 
 
 def rect_sum(ii_padded: np.ndarray, up: int, down: int, left: int, right: int) -> int:
-    """
-    Calculates the sum of a rectangle from a padded integral image. [u:d, l:r)
+    """Compute the sum of values in a rectangular region using an integral image.
+
+    The region spans rows [up, down) and columns [left, right).
+
+    Parameters
+    ----------
+    ii_padded : numpy.ndarray
+        Padded integral image of shape (H+1, W+1), as produced by
+        ``integral_image``.
+    up : int
+        Top row index (inclusive).
+    down : int
+        Bottom row index (exclusive).
+    left : int
+        Left column index (inclusive).
+    right : int
+        Right column index (exclusive).
+
+    Returns
+    -------
+    int
+        Sum of values in the specified rectangle.
     """
     return (
         ii_padded[down, right]
@@ -115,8 +135,18 @@ def rough_crop_search(
 
 
 def _area(box: tuple[int, int, int, int]) -> int:
-    """Helper function to calculate the area of a bounding box from its indices as
-    (up, down, left, right)."""
+    """Compute the pixel area of a bounding box given as (up, down, left, right).
+
+    Parameters
+    ----------
+    box : tuple[int, int, int, int]
+        Bounding box as (up, down, left, right) indices.
+
+    Returns
+    -------
+    int
+        Area in pixels: ``(down - up) * (right - left)``.
+    """
     return (box[1] - box[0]) * (box[3] - box[2])
 
 
@@ -261,10 +291,29 @@ def find_border_crop(
     jitter: int = 10,
     rng: int | None = None,
 ) -> tuple[int, int, int, int]:
-    """Find the indices for cropping the black border of an image after registration
+    """Find the largest border-free rectangular crop of a registered image.
 
-    Full white (255) pixels are also included in the calculation due resampling
-    artifacts.
+    Black (0) and full-white (255) pixels arising from affine warping are
+    treated as border artifacts and excluded from the crop region.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        2-D uint8 image containing border artifacts.
+    pix_stride : int, optional
+        Pixel stride for the initial coarse crop search. Default is 20.
+    n_restarts : int, optional
+        Number of random restarts for the hill-climb refinement. Default is 10.
+    jitter : int, optional
+        Jitter range (pixels) applied to the seed box at each restart.
+        Default is 10.
+    rng : int | None, optional
+        Seed for the random number generator. Default is None.
+
+    Returns
+    -------
+    tuple[int, int, int, int]
+        Crop indices as (up, down, left, right).
     """
     masked = border_mask(image)
     ii = integral_image(masked)

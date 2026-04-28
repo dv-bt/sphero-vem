@@ -58,7 +58,22 @@ def calculate_ap(
 
 
 def _slice_indexer(path: Path) -> tuple:
-    """Get tuple for indexing volume stack slice corresponding to ground truth path"""
+    """Build a numpy indexer tuple for the stack slice matching a ground-truth file.
+
+    Parses the axis letter (x/y/z) and slice index from the filename pattern
+    ``*-{axis}_{index}.tif`` and returns a 3-element indexing tuple where the
+    matching axis is an integer and the others are ``slice(None)``.
+
+    Parameters
+    ----------
+    path : Path
+        Path to a ground-truth TIFF whose name encodes axis and index.
+
+    Returns
+    -------
+    tuple
+        3-element index tuple compatible with zarr/numpy advanced indexing.
+    """
 
     axis_map = {"x": 2, "y": 1, "z": 0}
 
@@ -71,7 +86,18 @@ def _slice_indexer(path: Path) -> tuple:
 
 
 def _get_seg_target(array: zarr.Array) -> str:
-    """Get segmentation target from array metadata"""
+    """Extract the segmentation target name from a Zarr array's processing metadata.
+
+    Parameters
+    ----------
+    array : zarr.Array
+        Zarr array whose ``"processing"`` attribute contains a segmentation step.
+
+    Returns
+    -------
+    str
+        Segmentation target string (e.g. ``"cells"`` or ``"nuclei"``).
+    """
     seg_step = next(
         (
             d

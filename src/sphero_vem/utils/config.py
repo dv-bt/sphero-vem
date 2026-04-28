@@ -12,20 +12,74 @@ import dacite
 
 
 def to_serializable(input_dict) -> dict:
-    """Convert dictionary keys to a JSON serializable ones"""
+    """Convert all dictionary values to JSON-serializable types.
+
+    Handles non-standard types such as numpy scalars, numpy arrays, and
+    ``Path`` objects by round-tripping through ``json.dumps``/``json.loads``
+    with ``CustomJSONEncoder``.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Dictionary whose values may contain non-serializable types.
+
+    Returns
+    -------
+    dict
+        A new dictionary where all values are JSON-native types (str, int,
+        float, list, dict, bool, or None).
+    """
     json_string = json.dumps(input_dict, cls=CustomJSONEncoder)
     return json.loads(json_string)
 
 
 def _list_to_tuple(value: Any) -> tuple:
-    """Convert list to tuple, handling nested structures."""
+    """Convert a list to a tuple, leaving non-list values unchanged.
+
+    Used as a dacite type hook so that tuple fields survive JSON round-trips
+    (JSON deserializes tuples as lists).
+
+    Parameters
+    ----------
+    value : Any
+        Value to convert.
+
+    Returns
+    -------
+    tuple | Any
+        ``tuple(value)`` if *value* is a list, otherwise *value* unchanged.
+    """
     if isinstance(value, list):
         return tuple(value)
     return value
 
 
 class BaseConfig:
-    """Base config class providing JSON serialization for config dataclasses."""
+    """Base class for pipeline configuration dataclasses.
+
+    Provides JSON serialization, deserialization with type coercion, and a
+    two-tier parameter view (full config vs. scientifically relevant metadata).
+    Subclasses should be ``@dataclass`` and may override the two class
+    variables below to control which fields are exposed in each tier.
+
+    Class Variables
+    ---------------
+    EXCLUDED_JSON_FIELDS : ClassVar[set[str]]
+        Field names omitted from ``to_json`` / ``full_config``. Use this for
+        fields that cannot be JSON-serialized at all (e.g. live ``zarr.Array``
+        handles or ``torch.device`` objects).
+    EXCLUDED_PROCESSING_FIELDS : ClassVar[set[str]]
+        Field names omitted from ``processing_metadata`` *in addition to*
+        those in ``EXCLUDED_JSON_FIELDS``. Use this for fields that are
+        serializable but irrelevant to scientific reproducibility — such as
+        file paths, verbosity flags, worker counts, or derived runtime values.
+
+    Notes
+    -----
+    Deserialization uses ``dacite`` with ``DACITE_CONFIG``, which applies
+    ``Path`` and ``tuple`` type coercions so that configs survive a
+    JSON round-trip without losing type information.
+    """
 
     # Fields that cannot be serialized
     EXCLUDED_JSON_FIELDS: ClassVar[set[str]] = set()
@@ -40,31 +94,81 @@ class BaseConfig:
     )
 
     def to_json(self, filepath: str | Path) -> None:
-        """Saves the dataclass instance to a JSON file."""
+        """Serialize the config to a JSON file.
+
+        Parameters
+        ----------
+        filepath : str | Path
+            Destination file path. Created or overwritten.
+        """
         with open(filepath, "w") as file:
             json.dump(self.full_config(), file, indent=4)
 
     @classmethod
     def from_json(cls, filepath: str | Path) -> Self:
-        """Loads a dataclass instance from a JSON file with type coercion."""
+        """Load a config instance from a JSON file.
+
+        Parameters
+        ----------
+        filepath : str | Path
+            Path to a JSON file previously written by ``to_json``.
+
+        Returns
+        -------
+        Self
+            A new instance of the calling class with fields populated from
+            the JSON file, with type coercion applied via dacite.
+        """
         with open(filepath, "r") as file:
             config_dict = json.load(file)
         return cls.from_dict(config_dict)
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> Self:
-        """Loads a dataclass instance from a dict with type coercion."""
+        """Instantiate a config from a plain dictionary.
+
+        Type coercion (e.g. ``list`` → ``tuple``, ``str`` → ``Path``) is
+        applied via dacite using ``DACITE_CONFIG``.
+
+        Parameters
+        ----------
+        config_dict : dict[str, Any]
+            Dictionary mapping field names to values.
+
+        Returns
+        -------
+        Self
+            A new instance of the calling class.
+        """
         return dacite.from_dict(cls, config_dict, config=cls.DACITE_CONFIG)
 
     def full_config(self) -> dict:
-        """Returns full serializable config for complete reproducibility."""
+        """Return a fully serializable representation of the config.
+
+        Excludes fields listed in ``EXCLUDED_JSON_FIELDS``.
+
+        Returns
+        -------
+        dict
+            JSON-serializable dictionary of all config fields except those
+            excluded by ``EXCLUDED_JSON_FIELDS``.
+        """
         config_dict = asdict(self)
         for key in self.EXCLUDED_JSON_FIELDS:
             config_dict.pop(key, None)
         return to_serializable(config_dict)
 
     def processing_metadata(self) -> dict:
-        """Returns only scientifically relevant processing parameters."""
+        """Return the subset of config parameters relevant for scientific reproducibility.
+
+        Excludes fields listed in both ``EXCLUDED_JSON_FIELDS`` and
+        ``EXCLUDED_PROCESSING_FIELDS``.
+
+        Returns
+        -------
+        dict
+            JSON-serializable dictionary of scientifically relevant parameters.
+        """
         config_dict = asdict(self)
         excluded = self.EXCLUDED_JSON_FIELDS | self.EXCLUDED_PROCESSING_FIELDS
         for key in excluded:

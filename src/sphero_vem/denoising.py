@@ -38,6 +38,47 @@ from sphero_vem.utils.logging import (
 
 @dataclass
 class DenoisingConfig(BaseConfig):
+    """Configuration for Noise2Void training via CAREamics.
+
+    Parameters
+    ----------
+    root_path : Path
+        Path to the root Zarr archive containing the source data.
+    src_path : str
+        Path within the Zarr archive to the source image array.
+    num_images : int, optional
+        Number of 2-D slices to load for training. Default is 10.
+    val_split : float, optional
+        Fraction of slices to use for validation. Default is 0.2.
+    random_state : int, optional
+        Random seed for the train/validation split. Default is 42.
+    batch_size : int, optional
+        Training mini-batch size. Default is 128.
+    patch_size : int, optional
+        Spatial size of square patches extracted from slices. Default is 64.
+    epochs : int, optional
+        Number of training epochs. Default is 100.
+    unet_depth : int, optional
+        Depth of the U-Net encoder. Default is 2.
+    unet_num_channels_init : int, optional
+        Number of feature channels in the first U-Net encoder layer.
+        Default is 32.
+    n2v2 : bool, optional
+        If True, use N2V2 blind-spot strategy instead of standard N2V.
+        Default is False.
+    num_workers : int, optional
+        Number of data-loader worker processes. Default is 16.
+    wandb_project : str, optional
+        Weights & Biases project name for experiment tracking.
+        Default is ``"denoising"``.
+    work_root : Path, optional
+        Root directory for model checkpoints and configs.
+        Default is ``Path("data/models/n2v")``.
+    model_name : str | None, optional
+        Unique name for this training run. If None, a timestamp-based name
+        is generated automatically. Default is None.
+    """
+
     root_path: Path
     src_path: str
     num_images: int = 10
@@ -103,7 +144,18 @@ class DenoisingConfig(BaseConfig):
 
 
 def train_n2v(config: DenoisingConfig) -> None:
-    """Train Noise2Void using the parameters specified in config."""
+    """Train a Noise2Void model using the parameters in *config*.
+
+    Loads 2-D slices from a Zarr array, splits them into training and
+    validation sets, saves config files, and runs the CAREamics training loop
+    with Weights & Biases logging.
+
+    Parameters
+    ----------
+    config : DenoisingConfig
+        Training configuration. The Zarr archive at ``config.root_path`` must
+        be readable and the array at ``config.src_path`` must exist.
+    """
     root = zarr.open_group(config.root_path, mode="r")
     src_array = root.get(config.src_path)
 
