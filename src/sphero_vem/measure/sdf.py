@@ -137,15 +137,9 @@ def props_sdf(
     Returns
     -------
     dict
-        Dictionary of properties for the given label:
-        - volume: volume of the object.
-        - surface_area_real: surface area of the boundary.
-        - sphericity: ratio of the surface area of a sphere of equivalent volume over
-          the measured surface area.
-        - surface_area_boundary: surface are of the object that is cropped by the
-          image boundary.
-        - truncation_fraction: surface_area_boundary / surface_area_total.
-        - diam_equiv: diameter of a sphere with equivalent volume.
+        Dictionary of properties for the given label. Keys: ``volume``,
+        ``surface_area_real``, ``sphericity``, ``surface_area_boundary``,
+        ``truncation_fraction``, ``diam_equiv``.
     ArrayLike
         An array containing the signed distance function (SDF < 0 on the inside).
 

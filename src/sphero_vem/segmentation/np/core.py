@@ -1,7 +1,5 @@
 """
 Nanoparticle segmentation
-
-TODO: standardize spacing vs spacing_dir input
 """
 
 import json
@@ -35,7 +33,49 @@ from sphero_vem.segmentation.np.utils import bincount_ubyte
 
 @dataclass
 class NanoparticleSegConfig:
-    """Configuration class for NP segmentation"""
+    """Configuration for nanoparticle (NP) segmentation via empirical Bayes EM.
+
+    Parameters
+    ----------
+    stack_root : Path
+        Path to the root zarr store containing the image stack.
+    spacing_dir : str
+        Array path within ``images/`` (e.g. ``"50-10-10"``).
+    verbose : bool, optional
+        Enable progress bars and diagnostic output. Default is False.
+    max_iter : int, optional
+        Maximum number of EM iterations. Default is 10000.
+    eps : float, optional
+        Numerical floor added to PMFs to prevent log(0). Default is 1e-12.
+    nll_tol : float, optional
+        Convergence tolerance: stops when the per-iteration decrease in NLL
+        falls below this value. Default is 1e-10.
+    sampling_step : int, optional
+        Slice stride used when sampling the stack for histogram estimation;
+        1 uses every slice. Default is 1.
+    percent_th_low : float, optional
+        Lower intensity threshold as a CDF percentile of the stack histogram.
+        Pixels above this percentile are treated as NP candidates.
+        Default is 99.5.
+    percent_th_high : float, optional
+        Upper intensity threshold as a CDF percentile; pixels above this are
+        always excluded from the background histogram. Default is 99.8.
+    halo_pad : int, optional
+        Padding in pixels added around detected NP seeds when building the
+        background histogram. Default is 20.
+    min_size : int, optional
+        Minimum connected-component size in pixels for NP seed detection
+        during background extraction. Default is 20.
+    posterior_th : float, optional
+        Posterior probability threshold for binarization, used externally
+        by ``label_nanoparticles``. Default is 0.95.
+    beta_params : tuple[float, float], optional
+        Shape parameters (alpha, beta) of the Beta prior on the per-image
+        NP mixing weight ``pi``. Default is (1.0, 20.0).
+    zarr_chunks : tuple[int, int, int], optional
+        Chunk shape (Z, Y, X) for the posterior zarr array.
+        Default is (1, 1024, 1024).
+    """
 
     stack_root: Path
     spacing_dir: "str"
@@ -82,21 +122,57 @@ class NanoparticleSegConfig:
 
 
 class NanoparticleSegmentation:
-    """Calculate posterior probability of nanoparticles using the EM algorithm"""
+    """Two-component intensity mixture model for nanoparticle segmentation.
+
+    Decomposes the voxel intensity histogram of an SBF-SEM stack into a
+    background distribution and a nanoparticle (NP) distribution using an
+    Expectation-Maximization algorithm. Per-slice posterior probabilities
+    are estimated by MAP optimization of a per-image mixing weight.
+
+    Parameters
+    ----------
+    config : NanoparticleSegConfig
+        Segmentation configuration.
+
+    Attributes
+    ----------
+    config : NanoparticleSegConfig
+        Configuration passed at construction.
+    stack_root : zarr.Group
+        Open zarr group at ``config.stack_root``.
+    volume_stack : zarr.Array
+        Image array at ``images/{config.spacing_dir}`` within the group.
+    p_stack : numpy.ndarray
+        Full-stack intensity PMF of shape (256,). Set by :meth:`fit`.
+    p_bg : numpy.ndarray
+        Background intensity PMF of shape (256,). Set by :meth:`fit`.
+    p_np : numpy.ndarray
+        Fitted NP intensity PMF of shape (256,). Set by :meth:`fit`.
+    hist_stack : numpy.ndarray
+        Raw intensity histogram of the stack, shape (256,). Set by :meth:`fit`.
+    hist_bg : numpy.ndarray
+        Raw background pixel histogram, shape (256,). Set by :meth:`fit`.
+    summary_fit : dict
+        EM convergence summary with keys ``w_bg`` (final background mixing
+        weight), ``nll`` (final negative log-likelihood), and ``nit``
+        (number of iterations). Set by :meth:`fit`.
+
+    Notes
+    -----
+    Call :meth:`fit` before :meth:`predict`. A fitted model can be
+    persisted with :meth:`save` and restored from disk with :meth:`load`.
+    """
 
     def __init__(
         self,
         config: NanoparticleSegConfig,
     ) -> None:
-        """Initialize the class from patches of NPs and background.
+        """Open the zarr store and locate the image array.
 
         Parameters
         ----------
-        dir : Path
-            Directory containing the patches. The directory is expected to contain two
-            subdirectories named "np-crops" and "bg-crops"
-        verbose : bool
-            Enable verbose output. Default is False.
+        config : NanoparticleSegConfig
+            Segmentation configuration.
         """
         self.config = config
         self.stack_root = zarr.open_group(self.config.stack_root, mode="a")
@@ -354,7 +430,14 @@ class NanoparticleSegmentation:
         self.summary_fit = {"w_bg": w_bg, "nll": nll, "nit": i}
 
     def fit(self) -> None:
-        """Find the NP probability density"""
+        """Fit the two-component mixture model to the image stack.
+
+        Computes the full-stack intensity histogram (``p_stack``), extracts
+        the background histogram (``p_bg``), and runs EM to estimate the NP
+        intensity distribution (``p_np``). Populates ``hist_stack``,
+        ``hist_bg``, ``p_stack``, ``p_bg``, ``p_np``, and ``summary_fit``.
+        Must be called before :meth:`predict`.
+        """
         self._calc_stack_hist()
         self._calc_bg_hist()
         self._deconvolve_mixture()
@@ -415,8 +498,24 @@ class NanoparticleSegmentation:
         return posterior_map, posterior_bins
 
     def predict(self, model_name: str | None = None) -> None:
-        """Predict NP posterior map and save it under root.zarr/labels/nps/(spacing).
-        Posterior is saved as float16"""
+        """Compute and save the per-voxel NP posterior probability map.
+
+        For each slice, estimates the per-image NP mixing weight ``pi`` by MAP
+        optimization, then computes the per-pixel posterior probability under
+        the fitted mixture. Results are written to
+        ``labels/nps/posterior/{spacing_dir}`` in the zarr store as a float16
+        array.
+
+        Parameters
+        ----------
+        model_name : str | None, optional
+            Model identifier written to the zarr processing metadata.
+            Default is None.
+
+        Notes
+        -----
+        Requires a fitted model; call :meth:`fit` or :meth:`load` first.
+        """
 
         # Save posteriors under root/labels/nps/(spacing)
         posterior_group = self.stack_root.require_group("labels/nps/posterior")

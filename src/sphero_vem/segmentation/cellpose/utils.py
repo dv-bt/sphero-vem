@@ -1,5 +1,5 @@
 """
-Various utility functions for cellposes
+Various utility functions for Cellpose segmentation
 """
 
 from pathlib import Path

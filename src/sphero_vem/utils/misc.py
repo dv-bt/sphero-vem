@@ -148,8 +148,8 @@ def get_multiscales(group: zarr.Group) -> list[dict]:
     -------
     list[dict]
         A list containing the multiscale information as a dictionary. Scales
-        are sorted for ascending pixel area/voxel volume.
-        Example return:
+        are sorted for ascending pixel area/voxel volume. Example::
+
             [
                 {"path": "0", "scale": [50, 50, 50]},
                 {"path": "1", "scale": [100, 100, 100]}
@@ -187,7 +187,7 @@ def temporary_zarr(
     dtype : np.dtype
         Data type of the array. Default is np.float32.
     prefix : str
-        Prefix for the temporary directory name. Default is "intermediate_".
+        Prefix for the temporary directory name. Default is ``"intermediate_"``.
     dir : Path | str | None
         Parent directory for the temporary zarr. If None, uses system temp.
 

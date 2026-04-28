@@ -544,9 +544,10 @@ def register_stack(config: RegistrationConfig) -> None:
     """Register volume stack from zarr archive.
 
     This function performs registration in two phases:
+
     1. Sequential affine calculation: Register consecutive image pairs and write to
-       temporary zarr
-    2. Post-processing: Optional border cropping and writing final output
+       temporary zarr.
+    2. Post-processing: Optional border cropping and writing final output.
 
     Parameters
     ----------

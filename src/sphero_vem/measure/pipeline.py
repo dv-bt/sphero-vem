@@ -68,20 +68,6 @@ class LabelAnalysisConfig(BaseConfig):
         `read_regionprops` to reconstruct the tuple columns, e.g. bbox, centroid...
         Default is `"__"`
 
-    Attributes
-    ----------
-    array_path : Path
-        Computed path to the label zarr array.
-    save_root : Path
-        Computed path for saving output tables and meshes. Evaluates to
-        `labels/{seg_target}/tables/`.
-    spacing : tuple[float]
-        Voxel spacing in micrometers, read from zarr attributes.
-        NOTE: this assumes that the spacing stored in the zarr attributes is in nm.
-    cell_array_path : Path
-        Path to the array containing the cell labels with the same spacing as the
-        analyzed label array. This is used when analyzing targets other than cells to
-        assign their parent cell.
     """
 
     root_path: Path
@@ -163,10 +149,10 @@ def label_properties(
     Returns
     -------
     pd.DataFrame
-        DataFrame with one row per label containing:
-        - Voxel-based: label, bbox, centroid, inertia eigenvalues, etc.
-        - SDF-based: volume, surface_area, sphericity (if not voxel_only)
-        - Mesh-based: curvature statistics (if not voxel_only)
+        DataFrame with one row per label. Columns include voxel-based
+        properties (label, bbox, centroid, inertia eigenvalues) and, when
+        ``voxel_only`` is False, SDF-based properties (volume, surface area,
+        sphericity) and mesh-based curvature statistics.
 
     Raises
     ------
@@ -175,9 +161,12 @@ def label_properties(
 
     See Also
     --------
-    `props_voxel` : Voxel-based property extraction.
-    `props_sdf` : SDF-based volume and surface area computation.
-    `props_mesh` : Mesh-based curvature computation.
+    ~sphero_vem.measure.voxel.props_voxel
+        Voxel-based property extraction.
+    ~sphero_vem.measure.sdf.props_sdf
+        SDF-based volume and surface area computation.
+    ~sphero_vem.measure.mesh.props_mesh
+        Mesh-based curvature computation.
     """
 
     check_isotropic(spacing, raise_error=True)
