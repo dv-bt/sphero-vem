@@ -1,5 +1,5 @@
 """
-Functions for denoising images, based on Careamics.
+Functions for denoising images, based on CAREamics.
 """
 
 import warnings

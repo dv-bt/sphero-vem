@@ -1,5 +1,5 @@
 """
-This module contains functions and classes used for segmentation
+Cell and nucleus segmentation with Cellpose-SAM
 """
 
 import re

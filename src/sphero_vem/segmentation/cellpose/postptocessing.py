@@ -1,5 +1,5 @@
 """
-Various functions used for postprocessing cellpose flows and masks
+Various functions used for postprocessing Cellpose flows and masks
 """
 
 import networkx as nx

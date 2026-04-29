@@ -1,5 +1,5 @@
 """
-This module contains functions used to finetune cellpose models
+This module contains functions used to finetune Cellpose models
 """
 
 import os
