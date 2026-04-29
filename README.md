@@ -19,20 +19,29 @@ While the library was originally developed for SBF-SEM data of nanoparticle-load
 
 ## Installation
 
-For development:
+Clone the repository and install with [Poetry](https://python-poetry.org/):
 
 ```bash
 git clone https://github.com/dv-bt/sphero-vem.git
 cd sphero-vem
-poetry install
+poetry install           # CPU only
+poetry install -E cuda   # with CUDA 12.x GPU acceleration (Linux/Windows only)
 ```
-
-GPU acceleration (CUDA 12.x, Linux only) is enabled automatically when CuPy and CuCIM are available.
 
 ## Requirements
 
-- Python 3.11–3.13
-- PyTorch 2.0+
+- Python 3.12–3.13
+- [PyTorch](https://pytorch.org/) ≥ 2.0
+- [NumPy](https://numpy.org/) ≥ 2.0
+- [zarr](https://zarr.readthedocs.io/) ≥ 3.0
+- [Cellpose](https://cellpose.readthedocs.io/) ≥ 4.0
+- [CAREamics](https://careamics.github.io/) ≥ 0.0.9
+
+## GPU acceleration
+
+PyTorch-based stages (denoising, registration, Cellpose segmentation) support GPU execution via PyTorch's native device management, including CUDA and MPS (Apple Silicon), and require no additional dependencies.
+
+Array operation stages (nanoparticle segmentation, shape analysis, spatial analysis) additionally support CUDA acceleration via CuPy and CuCIM, installed with the `cuda` optional dependency group above. GPU acceleration is handled automatically with a custom orchestrator.
 
 ## Dataset and model weights
 
