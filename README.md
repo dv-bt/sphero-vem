@@ -24,8 +24,8 @@ Clone the repository and install with [Poetry](https://python-poetry.org/):
 ```bash
 git clone https://github.com/dv-bt/sphero-vem.git
 cd sphero-vem
-poetry install           # CPU only
-poetry install -E cuda   # with CUDA 12.x GPU acceleration (Linux/Windows only)
+poetry install           # CPU and limited GPU acceleration
+poetry install -E cuda   # with full CUDA 12.x GPU acceleration (Linux/Windows only)
 ```
 
 ## Requirements
