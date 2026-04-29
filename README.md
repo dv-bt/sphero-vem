@@ -28,6 +28,10 @@ poetry install           # CPU and limited GPU acceleration
 poetry install -E cuda   # with full CUDA 12.x GPU acceleration (Linux/Windows only)
 ```
 
+## Documentation
+
+Full documentation is available on the [official website](https://dv-bt.github.io/sphero-vem/).
+
 ## Requirements
 
 - Python 3.12–3.13
