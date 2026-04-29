@@ -25,25 +25,17 @@ dependencies = [
     "wandb (>=0.19.10,<0.20.0)",
 ]
 
-
 [project.optional-dependencies]
 cuda = [
     "cupy-cuda12x>=13.6.0,<14.0.0",
     "cucim-cu12>=25.12.0,<26.0.0",
 ]
 
-
 [tool.poetry]
 packages = [{include = "sphero_vem", from = "src"}]
 
-
-[tool.poetry.group.notebook.dependencies]
-ipykernel = "^6.29.5"
-ipympl = "^0.9.7"
-seaborn = "^0.13.2"
-statannotations = ">=0.7.2,<0.8.0"
-statsmodels = ">=0.14.6,<0.15.0"
-
+[tool.poetry.group.dev]
+optional = true
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
@@ -51,16 +43,29 @@ pytest-cov = "^6.1.1"
 ruff = "^0.11.4"
 pre-commit = "^4.2.0"
 
+[tool.poetry.group.docs]
+optional = true
 
 [tool.poetry.group.docs.dependencies]
 sphinx = "^8.0.0"
 pydata-sphinx-theme = "^0.16.0"
 sphinx-autodoc-typehints = "^3.0.0"
 
-
+[tool.poetry.group.napari]
+optional = true
 
 [tool.poetry.group.napari.dependencies]
 napari = {extras = ["pyqt6"], version = "^0.6.6"}
+
+[tool.poetry.group.notebook]
+optional = true
+
+[tool.poetry.group.notebook.dependencies]
+ipykernel = "^6.29.5"
+ipympl = "^0.9.7"
+seaborn = "^0.13.2"
+statannotations = ">=0.7.2,<0.8.0"
+statsmodels = ">=0.14.6,<0.15.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

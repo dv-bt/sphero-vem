@@ -7473,4 +7473,4 @@ cuda = ["cucim-cu12", "cupy-cuda12x"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "88fabd6dff3a394339dbc63296f20f6648c2b1a60e31068745d93c7be9ac0fbf"
+content-hash = "fdf95d6c6622be6e2af6e2da01c8e731ab8a6828704521824d387704df655051"
