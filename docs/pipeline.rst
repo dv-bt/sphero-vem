@@ -51,14 +51,14 @@ Per-label 3D morphological descriptors are computed:
   curvedness via mesh extraction and derivative estimation
 - **Fractal dimension**: Minkowski-Bouligand tube scaling
 
-Stage 7 — Spatial analysis
+Stage 7: Spatial analysis
 ---------------------------
 
 A Euclidean distance transform to the nearest nuclear surface is computed for
 each cell. Each NP is assigned to its parent cell and its distance to the
 nuclear surface is recorded.
 
-Stage 8 — Output
+Stage 8: Output
 -----------------
 
 Results are written as Parquet tables (per-label properties) and zarr arrays
