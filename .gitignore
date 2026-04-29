@@ -167,9 +167,7 @@ scripts/sync/
 notebooks/paper
 
 # Temporarily ignore docs
-docs/
-mkdocs.yml
-.github/workflows/docs.yml
+docs/_build/
 
 # Claude Code instructions
 CLAUDE.md
