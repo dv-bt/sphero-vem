@@ -77,7 +77,7 @@ class BaseConfig:
     Notes
     -----
     Deserialization uses ``dacite`` with ``DACITE_CONFIG``, which applies
-    ``Path`` and ``tuple`` type coercions so that configs survive a
+    ``Path``, ``tuple``,``float``, and ``int`` type coercions so that configs survive a
     JSON round-trip without losing type information.
     """
 
@@ -89,6 +89,8 @@ class BaseConfig:
         type_hooks={
             Path: Path,
             tuple: _list_to_tuple,
+            float: float,
+            int: int,
         },
         cast=[tuple],
     )

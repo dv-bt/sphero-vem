@@ -5,18 +5,19 @@ Nanoparticle segmentation
 import json
 from typing import Self
 from pathlib import Path
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field
 from tqdm import tqdm
 import numpy as np
 import zarr
-from zarr.codecs import BloscCodec, BloscShuffle
 from scipy.optimize import minimize_scalar
 from scipy.ndimage import find_objects
 import skimage as ski_cpu
 from sphero_vem.utils import (
+    BaseConfig,
+    ProcessingStep,
     CustomJSONEncoder,
-    create_ome_multiscales,
     dirname_from_spacing,
+    timestamp,
 )
 from sphero_vem.utils.accelerator import (
     xp,
@@ -26,18 +27,18 @@ from sphero_vem.utils.accelerator import (
     to_host,
     to_device,
 )
-from sphero_vem.io import write_zarr
+from sphero_vem.io import write_zarr, _create_zarr_array, _write_zarr_metadata
 from sphero_vem.postprocessing import binary_closing, filter_and_relabel
 from sphero_vem.segmentation.np.utils import bincount_ubyte
 
 
 @dataclass
-class NanoparticleSegConfig:
+class NanoparticleSegConfig(BaseConfig):
     """Configuration for nanoparticle (NP) segmentation via empirical Bayes EM.
 
     Parameters
     ----------
-    stack_root : Path
+    root_path : Path
         Path to the root zarr store containing the image stack.
     spacing_dir : str
         Array path within ``images/`` (e.g. ``"50-10-10"``).
@@ -75,9 +76,12 @@ class NanoparticleSegConfig:
     zarr_chunks : tuple[int, int, int], optional
         Chunk shape (Z, Y, X) for the posterior zarr array.
         Default is (1, 1024, 1024).
+    model_name : str | None
+        Name of the fitted model. If None, the model name will be assigned
+        automatically as ``f"nps-{timestamp()}"``.
     """
 
-    stack_root: Path
+    root_path: Path
     spacing_dir: "str"
     verbose: bool = False
     max_iter: int = 10000
@@ -91,34 +95,23 @@ class NanoparticleSegConfig:
     posterior_th: float = 0.95
     beta_params: tuple[float, float] = (1.0, 20.0)
     zarr_chunks: tuple[int, int, int] = (1, 1024, 1024)
+    model_name: str | None = None
+
+    seg_target: str = field(init=False)
+
+    EXCLUDED_PROCESSING_FIELDS = set(
+        [
+            "root_path",
+            "spacing_dir",
+            "verbose",
+            "zarr_chunks",
+        ]
+    )
 
     def __post_init__(self) -> None:
-        """Get image list"""
-
-        # Enforce correct types
-        if isinstance(self.beta_params, list):
-            self.beta_params = tuple(self.beta_params)
-        if isinstance(self.stack_root, str):
-            self.stack_root = Path(self.stack_root)
-
-    def to_serializable(self) -> dict:
-        """Return the dataclass as a JSON or YAML-serializable dictionary"""
-        config_dict = asdict(self)
-        json_string = json.dumps(config_dict, cls=CustomJSONEncoder)
-        return json.loads(json_string)
-
-    def save_json(self, filepath: str | Path) -> None:
-        """Saves the dataclass instance to a JSON file."""
-        with open(filepath, "w") as file:
-            json.dump(self.to_serializable(), file, indent=4)
-
-    @classmethod
-    def from_json(cls, filepath: str | Path) -> Self:
-        """Loads a dataclass instance from a JSON file."""
-
-        with open(filepath, "r") as file:
-            config_dict = json.load(file)
-        return cls(**config_dict)
+        self.seg_target = "nps"
+        if self.model_name is None:
+            self.model_name = f"nps-{timestamp()}"
 
 
 class NanoparticleSegmentation:
@@ -175,7 +168,7 @@ class NanoparticleSegmentation:
             Segmentation configuration.
         """
         self.config = config
-        self.stack_root = zarr.open_group(self.config.stack_root, mode="a")
+        self.stack_root = zarr.open_group(self.config.root_path, mode="a")
         self.volume_stack: zarr.Array = self.stack_root.get(
             f"images/{self.config.spacing_dir}"
         )
@@ -204,7 +197,7 @@ class NanoparticleSegmentation:
         It also saves the summary of the fit results in fit_results.json"""
         if isinstance(target_dir, str):
             target_dir = Path(target_dir)
-        self.config.save_json(target_dir / "training_manifest.json")
+        self.config.to_json(target_dir / "training_manifest.json")
         np.savez(
             target_dir / "model_params.npz",
             p_np=self.p_np,
@@ -497,7 +490,7 @@ class NanoparticleSegmentation:
         posterior_map = posterior_bins[image]
         return posterior_map, posterior_bins
 
-    def predict(self, model_name: str | None = None) -> None:
+    def predict(self) -> None:
         """Compute and save the per-voxel NP posterior probability map.
 
         For each slice, estimates the per-image NP mixing weight ``pi`` by MAP
@@ -506,28 +499,19 @@ class NanoparticleSegmentation:
         ``labels/nps/posterior/{spacing_dir}`` in the zarr store as a float16
         array.
 
-        Parameters
-        ----------
-        model_name : str | None, optional
-            Model identifier written to the zarr processing metadata.
-            Default is None.
-
         Notes
         -----
         Requires a fitted model; call :meth:`fit` or :meth:`load` first.
         """
 
-        # Save posteriors under root/labels/nps/(spacing)
-        posterior_group = self.stack_root.require_group("labels/nps/posterior")
-
-        compressor = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
-        posterior_arr = posterior_group.create_array(
-            self.config.spacing_dir,
+        dst_zarr = _create_zarr_array(
+            root=self.stack_root,
+            dst_path=f"labels/nps/posterior/{self.config.spacing_dir}",
             shape=self.volume_stack.shape,
-            chunks=self.config.zarr_chunks,
+            chunks=self.config.chunks,
             dtype="f2",
-            compressors=compressor,
         )
+
         for idx in tqdm(
             range(self.volume_stack.shape[0]),
             desc="Calculating posterior",
@@ -535,23 +519,16 @@ class NanoparticleSegmentation:
         ):
             image = self.volume_stack[idx]
             posterior, _ = self._posterior_image(image)
-            posterior_arr[idx] = posterior
+            dst_zarr[idx] = posterior
 
-        processing = [
-            {
-                "step": "segmentation",
-                "seg_target": "nps",
-                "model": model_name,
-                **self.config.to_serializable(),
-            }
-        ]
+        processing = ProcessingStep.from_config("segmentation", self.config)
 
-        posterior_arr.attrs["spacing"] = self.volume_stack.attrs["spacing"]
-        posterior_arr.attrs["processing"] = (
-            self.volume_stack.attrs["processing"] + processing
+        _write_zarr_metadata(
+            root=self.stack_root,
+            dst_zarr=dst_zarr,
+            src_zarr=self.volume_stack,
+            processing=processing,
         )
-        posterior_arr.attrs["inputs"] = self.volume_stack.path
-        create_ome_multiscales(posterior_group)
 
 
 def label_nanoparticles(
@@ -585,6 +562,11 @@ def label_nanoparticles(
     min_size : int
         Minimimum label size in voxels. Labels with size < min_size will be discarded.
         Default is 10.
+
+    Notes
+    -----
+    The posterior array is loaded fully into memory. For large volumes, ensure
+    sufficient RAM is available before calling this function.
 
     """
 
