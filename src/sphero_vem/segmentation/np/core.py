@@ -109,6 +109,7 @@ class NanoparticleSegConfig(BaseConfig):
     )
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         self.seg_target = "nps"
         if self.model_name is None:
             self.model_name = f"nps-{timestamp()}"

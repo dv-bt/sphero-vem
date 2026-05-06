@@ -116,6 +116,7 @@ class DenoisingConfig(BaseConfig):
     )
 
     def __post_init__(self):
+        super().__post_init__()
         if not self.model_name:
             self.model_name = f"n2v-{timestamp()}"
         self.work_dir = self.work_root / self.model_name

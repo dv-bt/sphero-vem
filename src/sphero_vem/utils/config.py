@@ -2,10 +2,11 @@
 Functions and utilities for config classes
 """
 
+from typing import get_origin, get_type_hints
 from pathlib import Path
 from datetime import datetime
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from typing import ClassVar, Self, Any
 from sphero_vem.utils.misc import CustomJSONEncoder
 import dacite
@@ -57,8 +58,9 @@ def _list_to_tuple(value: Any) -> tuple:
 class BaseConfig:
     """Base class for pipeline configuration dataclasses.
 
-    Provides JSON serialization, deserialization with type coercion, and a
-    two-tier parameter view (full config vs. scientifically relevant metadata).
+    Provides JSON serialization, automatic type coercion for supported fields
+    (see Notes), and a two-tier parameter view (full config vs. scientifically
+    relevant metadata).
     Subclasses should be ``@dataclass`` and may override the two class
     variables below to control which fields are exposed in each tier.
 
@@ -94,6 +96,19 @@ class BaseConfig:
         },
         cast=[tuple],
     )
+
+    def __post_init__(self):
+        """Coerce arguments to the correct type"""
+        hints = get_type_hints(type(self))
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if value is None:
+                continue
+            target_type = hints.get(f.name)
+            origin_type = get_origin(target_type) or target_type
+            hook = self.DACITE_CONFIG.type_hooks.get(origin_type)
+            if hook is not None:
+                object.__setattr__(self, f.name, hook(value))
 
     def to_json(self, filepath: str | Path) -> None:
         """Serialize the config to a JSON file.
