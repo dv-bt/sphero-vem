@@ -1,5 +1,10 @@
 # sphero-vem
 
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)](https://www.python.org)
+[![CI](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml/badge.svg)](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/dv-bt/sphero-vem/graph/badge.svg?token=0VqxCn7LKp)](https://codecov.io/gh/dv-bt/sphero-vem)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 Python library for quantitative analysis of volumetric electron microscopy (vEM) data.
 
 `sphero-vem` was developed for the end-to-end analysis pipeline described in:
