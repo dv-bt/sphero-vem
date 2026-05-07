@@ -3,7 +3,7 @@ Repair OME multiscales in target zarr store
 """
 
 from pathlib import Path
-from sphero_vem.utils import repair_multiscales
+from sphero_vem.io import repair_multiscales
 
 
 def main():

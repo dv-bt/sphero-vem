@@ -11,7 +11,7 @@ from sphero_vem.segmentation.cellpose import (
     calculate_flows,
     calculate_masks,
 )
-from sphero_vem.utils import get_multiscales
+from sphero_vem.io import _get_multiscales
 
 
 def segment_cells(root_path: Path, spacing_dir: str, model: str) -> None:
@@ -49,7 +49,7 @@ def main():
             image_group = zarr.open_group(dataset / "images", mode="a")
 
             # Get smallest scale for predictions
-            scales = get_multiscales(image_group)
+            scales = _get_multiscales(image_group)
             arr_path = scales[-1]["path"]
 
             segment_cells(root_path=dataset, spacing_dir=arr_path, model=item["model"])

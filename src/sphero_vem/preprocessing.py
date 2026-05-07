@@ -16,7 +16,8 @@ import dask.array as da
 import dask_image
 import dask_image.ndinterp
 from dask.diagnostics import ProgressBar
-from sphero_vem.utils import dirname_from_spacing, create_ome_multiscales
+from sphero_vem.utils import dirname_from_spacing
+from sphero_vem.io import _create_ome_multiscales
 
 
 def create_pyramid(
@@ -215,7 +216,7 @@ def resample_array(
         }
     ]
     dst_zarr.attrs["inputs"] = src_array.path
-    create_ome_multiscales(parent_group)
+    _create_ome_multiscales(parent_group)
 
 
 def rechunk_array(

@@ -3,27 +3,15 @@ Utility functions
 """
 
 import tempfile
-import warnings
 import shutil
 from pathlib import Path
 from contextlib import contextmanager
-import yaml
-import json
 from datetime import datetime
 from collections.abc import Sequence
 import torch
 import zarr
 import numpy as np
 import pandas as pd
-
-
-def read_manifest(data_dir: Path) -> dict:
-    """Read manifest in directory"""
-    try:
-        with open(data_dir / "manifest.yaml", "r") as file:
-            return yaml.safe_load(file)
-    except FileNotFoundError:
-        return {}
 
 
 def vprint(text: str, verbose: bool) -> None:
@@ -46,126 +34,10 @@ def detect_torch_device() -> torch.device:
     return torch.device("cpu")
 
 
-class CustomJSONEncoder(json.JSONEncoder):
-    """A custom JSONEncoder to handle non base data types"""
-
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, Path):
-            return str(obj)
-        return super().default(obj)
-
-
-def create_ome_multiscales(group: zarr.Group | Path) -> None:
-    """Create multiscales specifications compliant with OME-NGFF format v0.5.
-
-    Automatically infers multichannel and spatial dimensions from existing arrays.
-
-    Parameters
-    ----------
-    group : zarr.Group | Path
-        Zarr group that contains the multiscale arrays, or path to it.
-
-    Notes
-    -----
-    - Spatial dimensions inferred from 'spacing' attribute length
-    - Channel dimension assumed if array.ndim > len(spacing)
-    - Axis order is always C(Z)YX
-    - Does nothing if no scale arrays found
-    """
-    if isinstance(group, Path):
-        group = zarr.open_group(group, mode="a")
-
-    scales = get_multiscales(group)
-
-    # Early return if no scales present
-    if not scales:
-        return
-
-    # Infer from first array
-    first_array = group[scales[0]["path"]]
-    spatial_dims = len(scales[0]["scale"])  # spacing length
-    multichannel = first_array.ndim > spatial_dims
-
-    # Build spatial axes
-    spatial_axes = [
-        {"name": "y", "type": "space", "unit": "nanometer"},
-        {"name": "x", "type": "space", "unit": "nanometer"},
-    ]
-    if spatial_dims == 3:
-        spatial_axes = [
-            {"name": "z", "type": "space", "unit": "nanometer"}
-        ] + spatial_axes
-
-    # Handle multichannel
-    channel_axis = [{"name": "c", "type": "channel"}] if multichannel else []
-    channel_scale = [1] if multichannel else []
-
-    group.attrs["multiscales"] = [
-        {
-            "version": "0.5",
-            "name": "images",
-            "axes": channel_axis + spatial_axes,
-            "datasets": [
-                {
-                    "path": s["path"],
-                    "coordinateTransformations": [
-                        {
-                            "type": "scale",
-                            "scale": channel_scale + list(s["scale"]),
-                        }
-                    ],
-                }
-                for s in scales
-            ],
-        }
-    ]
-
-
 def dirname_from_spacing(spacing: tuple[int, int, int]) -> str:
     """Convenience function to create a directory name from spacing in the format
     '{spacing_z}-{spacing_y}-{spacing_x}'"""
     return "-".join([str(i) for i in spacing])
-
-
-def get_multiscales(group: zarr.Group) -> list[dict]:
-    """Get array scales as a list of dicts.
-
-    The function looks for "spacing" in the array attributes as a source of ground
-    truth. If not found, the array is ignored.
-
-    Parameters
-    ----------
-    group : zarr.Group
-        Zarr group containing the multiscale arrays.
-
-    Returns
-    -------
-    list[dict]
-        A list containing the multiscale information as a dictionary. Scales
-        are sorted for ascending pixel area/voxel volume. Example::
-
-            [
-                {"path": "0", "scale": [50, 50, 50]},
-                {"path": "1", "scale": [100, 100, 100]}
-            ]
-    """
-
-    def _get_spacing(arr: zarr.Array) -> tuple[int | float] | None:
-        """Access spacing and returns None if not found"""
-        return arr.attrs.get("spacing", None)
-
-    multiscales = [
-        {"path": key, "scale": _get_spacing(arr)}
-        for key, arr in group.arrays()
-        if _get_spacing(arr)
-    ]
-    return sorted(multiscales, key=lambda x: np.prod(x["scale"]))
 
 
 @contextmanager
@@ -427,42 +299,3 @@ def reconstruct_tuples(
         df_out[base] = list(zip(*[df[c] for c in col_names]))
 
     return df_out
-
-
-def repair_multiscales(root: Path, start_path: str = "") -> None:
-    """Recursively repair multiscales metadata for all groups in hierarchy.
-
-    Parameters
-    ----------
-    root : Path
-        Path to the Zarr store containing the hierarchy
-    start_path : str, default=""
-        Path to start repair from (empty string for root).
-    """
-
-    # Ignores warnings of non-standard zarr hierarchy components, such as tables.
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message="Object at .* is not recognized as a component of a Zarr hierarchy",
-            category=zarr.errors.ZarrUserWarning,
-        )
-
-        root = zarr.open(root, mode="a")
-        group = root.get(start_path) if start_path else root
-
-        if group is not None:
-            _repair_group_recursive(group)
-
-
-def _repair_group_recursive(group: zarr.Group) -> None:
-    """Recursively repair a group and its children."""
-    # Repair this group if it has multiscales
-    if "multiscales" in group.attrs:
-        create_ome_multiscales(group)
-
-    # Recurse into all subgroups
-    for key in group.group_keys():
-        subgroup = group.get(key)
-        if subgroup is not None and isinstance(subgroup, zarr.Group):
-            _repair_group_recursive(subgroup)

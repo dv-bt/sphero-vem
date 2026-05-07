@@ -15,10 +15,10 @@ import skimage as ski_cpu
 from sphero_vem.utils import (
     BaseConfig,
     ProcessingStep,
-    CustomJSONEncoder,
     dirname_from_spacing,
     timestamp,
 )
+from sphero_vem.utils.config import CustomJSONEncoder
 from sphero_vem.utils.accelerator import (
     xp,
     gpu_dispatch,
