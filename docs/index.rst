@@ -25,7 +25,7 @@ to generalize to other vEM modalities and biological specimens.
    `https://doi.org/10.64898/2026.04.17.719153 <https://doi.org/10.64898/2026.04.17.719153>`_
 
 The annotated dataset is publicly available at `BioImage Archive (S-BIAD3263)
-<https://doi.org/10.6019/S-BIAD3263>`_, and finetuned model weights for cell and
+<https://doi.org/10.6019/S-BIAD3263>`_, and fine-tuned model weights for cell and
 nucleus segmentation are available on `Zenodo
 <https://doi.org/10.5281/zenodo.19616546>`_.
 

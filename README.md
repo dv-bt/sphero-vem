@@ -1,5 +1,6 @@
 # sphero-vem
 
+[![PyPI](https://img.shields.io/pypi/v/sphero-vem)](https://pypi.org/project/sphero-vem/)
 [![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)](https://www.python.org)
 [![CI](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml/badge.svg)](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/dv-bt/sphero-vem/graph/badge.svg?token=0VqxCn7LKp)](https://codecov.io/gh/dv-bt/sphero-vem)
@@ -9,7 +10,7 @@ Python library for quantitative analysis of volumetric electron microscopy (vEM)
 
 `sphero-vem` was developed for the end-to-end analysis pipeline described in:
 
-> Bottone et al., *3D Reconstruction of Nanoparticle Distribution in Tumor Spheroids with Volume Electron Microscopy*, [Preprint: [https://doi.org/10.64898/2026.04.17.719153](https://doi.org/10.64898/2026.04.17.719153)]
+> Bottone et al., *3D Reconstruction of Nanoparticle Distribution in Tumor Spheroids with Volume Electron Microscopy*, Preprint: [https://doi.org/10.64898/2026.04.17.719153](https://doi.org/10.64898/2026.04.17.719153)
 
 While the library was originally developed for SBF-SEM data of nanoparticle-loaded tumor spheroids, the individual components are designed to be reusable for other vEM datasets and workflows.
 
@@ -24,13 +25,35 @@ While the library was originally developed for SBF-SEM data of nanoparticle-load
 
 ## Installation
 
+The library is available on [PyPI](https://pypi.org/project/sphero-vem/). We recommend installing it in a dedicated virtual environment.
+
+```bash
+pip install sphero-vem
+```
+
+For full CUDA 12.x GPU acceleration (Linux only; Windows untested):
+
+```bash
+pip install "sphero-vem[cuda]"
+```
+
+PyTorch-based stages (denoising, registration, Cellpose-based segmentation) support GPU execution
+via PyTorch's native device management, including CUDA and MPS (Apple Silicon),
+with no additional dependencies.
+
+Array operation stages (nanoparticle segmentation, shape analysis, spatial analysis)
+additionally support CUDA acceleration via CuPy and CuCIM, available with the
+`cuda` extra above.
+
+### Development install
+
 Clone the repository and install with [Poetry](https://python-poetry.org/):
 
 ```bash
 git clone https://github.com/dv-bt/sphero-vem.git
 cd sphero-vem
-poetry install           # CPU and limited GPU acceleration
-poetry install -E cuda   # with full CUDA 12.x GPU acceleration (Linux/Windows only)
+poetry install           # base install
+poetry install -E cuda   # with CUDA 12.x GPU acceleration (Linux only; Windows untested)
 ```
 
 ## Documentation
@@ -45,12 +68,6 @@ Full documentation is available on the [official website](https://dv-bt.github.i
 - [zarr](https://zarr.readthedocs.io/) ≥ 3.0
 - [Cellpose](https://cellpose.readthedocs.io/) ≥ 4.0
 - [CAREamics](https://careamics.github.io/) ≥ 0.0.9
-
-## GPU acceleration
-
-PyTorch-based stages (denoising, registration, Cellpose segmentation) support GPU execution via PyTorch's native device management, including CUDA and MPS (Apple Silicon), and require no additional dependencies.
-
-Array operation stages (nanoparticle segmentation, shape analysis, spatial analysis) additionally support CUDA acceleration via CuPy and CuCIM, installed with the `cuda` optional dependency group above. GPU acceleration is handled automatically with a custom orchestrator.
 
 ## Dataset and model weights
 
