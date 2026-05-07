@@ -6,7 +6,12 @@ A scientific Python package for processing, registering, segmenting, and analyzi
 microscopy imaging.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("sphero-vem")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 # Core I/O operations
 from .io import (
