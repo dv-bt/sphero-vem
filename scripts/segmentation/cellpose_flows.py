@@ -44,7 +44,8 @@ def main():
             guided_filter_cellprob=params["guided_filter_cellprob"],
         )
         calculate_flows(config)
-        torch.cuda.empty_cache()
+        if config.device.type == "cuda":
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

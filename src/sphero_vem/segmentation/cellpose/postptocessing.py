@@ -9,7 +9,7 @@ from skimage.morphology import ball
 from scipy.ndimage import binary_closing
 import torch
 import torch.nn.functional as F
-from sphero_vem.utils import vprint
+from sphero_vem.utils import vprint, detect_torch_device
 from sphero_vem.segmentation.cellpose.utils import (
     gaussian_edge_map,
     build_rag,
@@ -352,7 +352,7 @@ def _project_curl_free(
 def decompose_flow(
     dP: np.ndarray,
     z_pad_fraction: float = 0.3,
-    device: torch.DeviceObjType = torch.device("cpu"),
+    device: torch.device | None = None,
 ) -> np.ndarray[np.float32]:
     """Decompose dP output from cellpose into its curl-free component.
 
@@ -367,15 +367,18 @@ def decompose_flow(
     z_pad_fraction : float
         The fraction of the total Z to be padded on both sides. This is important
         to avoid ghosting artifacts. Default is 0.3
-    device : torch.device
-        Torch device where the computation should be executed. Default is
-        torch.device("cpu")
+    device : torch.device | None, optional
+        Torch device where the computation should be executed. If None, the
+        best device available on the current machine is detected
+        automatically. Default is None.
 
     Returns
     -------
     np.ndarray
         The curl-free component of the flows. This is returned in np.float32.
     """
+    device = detect_torch_device() if device is None else device
+
     dP_tensor = torch.from_numpy(dP).to(device=device, dtype=torch.float32)
     z_padding = int(dP_tensor.shape[1] * z_pad_fraction)
 

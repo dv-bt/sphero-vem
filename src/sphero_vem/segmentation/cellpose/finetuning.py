@@ -9,11 +9,12 @@ import re
 import json
 import logging
 import numpy as np
+import torch
 from sklearn.model_selection import train_test_split
 import wandb
 from cellpose import models, train, io
 from tifffile import imread
-from sphero_vem.utils import timestamp
+from sphero_vem.utils import timestamp, detect_torch_device
 from sphero_vem.io import write_image
 from sphero_vem.utils import BaseConfig
 
@@ -44,6 +45,11 @@ class CellposeFinetuneConfig(BaseConfig):
         Save model predictions on test images after training. Default is False.
     use_bfloat16 : bool, optional
         Use bfloat16 mixed precision during training. Default is True.
+    device : torch.device, optional
+        Torch device used for training. Defaults to the best device available
+        on the current machine, as reported by ``detect_torch_device``.
+        Excluded from serialization so that a saved config is re-detected
+        rather than restored on a different machine.
     """
 
     dir_labeled: Path | str
@@ -55,6 +61,7 @@ class CellposeFinetuneConfig(BaseConfig):
     seg_target: str = "cells"
     save_predictions: bool = False
     use_bfloat16: bool = True
+    device: torch.device = field(default_factory=detect_torch_device)
 
     # Parameters that are initialized by post_init
     model_name: str = field(init=False)
@@ -62,8 +69,12 @@ class CellposeFinetuneConfig(BaseConfig):
     dir_predictions: Path = field(init=False)
     spacing: list = field(init=False)
 
+    EXCLUDED_JSON_FIELDS = set(["device"])
+
     def __post_init__(self):
         """Set ``wandb_project``, ``model_name``, output directories, and ``spacing``."""
+        super().__post_init__()
+
         if self.seg_target == "cells":
             self.wandb_project = "cell-segmentation"
         elif self.seg_target == "nuclei":
@@ -328,7 +339,9 @@ def finetune_cellpose(config: CellposeFinetuneConfig):
     train_files, test_files = _split_dataset(config)
     _generate_training_manifest(config, train_files, test_files)
 
-    cellpose_model = models.CellposeModel(gpu=True, use_bfloat16=config.use_bfloat16)
+    cellpose_model = models.CellposeModel(
+        device=config.device, use_bfloat16=config.use_bfloat16
+    )
 
     train_data, train_labels = _load_data(config, train_files)
     test_data, test_labels = _load_data(config, test_files)

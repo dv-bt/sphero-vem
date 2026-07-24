@@ -27,9 +27,23 @@ def timestamp() -> str:
 
 
 def detect_torch_device() -> torch.device:
+    """Select the best torch device available on the current machine.
+
+    The preference order is CUDA, then Apple Metal Performance Shaders (MPS),
+    then CPU. This is the single source of truth for device selection across
+    the package: config dataclasses default their ``device`` field to this
+    function via ``field(default_factory=detect_torch_device)``.
+
+    Returns
+    -------
+    torch.device
+        ``torch.device("cuda")`` if a CUDA device is available,
+        ``torch.device("mps")`` on Apple silicon with a working Metal
+        backend, otherwise ``torch.device("cpu")``.
+    """
     if torch.cuda.is_available():
         return torch.device("cuda")
-    elif torch.mps.is_available():
+    elif torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
 

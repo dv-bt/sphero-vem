@@ -11,7 +11,7 @@ import torch
 import numpy as np
 import zarr
 from sphero_vem.io import write_zarr
-from sphero_vem.utils import vprint
+from sphero_vem.utils import vprint, detect_torch_device
 from sphero_vem.utils.config import BaseConfig, ProcessingStep
 from sphero_vem.segmentation.cellpose.postptocessing import (
     merge_labels,
@@ -65,6 +65,12 @@ class CellposeFlowConfig(BaseConfig):
         Regularization parameter for the guided filter. Default is 1e-2.
     save_raw_flows : bool, optional
         Save unprocessed flows alongside processed ones. Default is False.
+    device : torch.device, optional
+        Torch device used for model inference and flow decomposition.
+        Defaults to the best device available on the current machine, as
+        reported by ``detect_torch_device``. Excluded from serialization so
+        that a saved config is re-detected rather than restored on a
+        different machine.
     """
 
     root_path: Path
@@ -85,12 +91,14 @@ class CellposeFlowConfig(BaseConfig):
     guided_filter_radius: int = 8
     guided_filter_eps: float = 1e-2
     save_raw_flows: bool = False
+    device: torch.device = field(default_factory=detect_torch_device)
 
     seg_target: str = field(init=False)
     model_dir: Path = field(init=False)
     spacing: list[int | float] = field(init=False)
     src_zarr: zarr.Array = field(init=False)
 
+    EXCLUDED_JSON_FIELDS = set(["src_zarr", "device"])
     EXCLUDED_PROCESSING_FIELDS = set(
         [
             "root_path",
@@ -107,6 +115,8 @@ class CellposeFlowConfig(BaseConfig):
 
     def __post_init__(self):
         """Derive ``seg_target``, ``model_dir``, ``src_zarr``, and ``spacing``."""
+        super().__post_init__()
+
         # Allow loading pretrained model
         if self.model == "cpsam":
             # Set model_dir as empty path for compatibility with class init
@@ -171,7 +181,9 @@ def compute_raw_flows(config: CellposeFlowConfig) -> tuple[np.ndarray, np.ndarra
 
     image: np.ndarray = config.src_zarr[:]
     pretrained_model = "cpsam" if config.model == "cpsam" else config.model_dir
-    cellpose_model = models.CellposeModel(gpu=True, pretrained_model=pretrained_model)
+    cellpose_model = models.CellposeModel(
+        device=config.device, pretrained_model=pretrained_model
+    )
 
     time_start = datetime.now()
     vprint(f"Starting segmentation at {time_start}", config.verbose)
@@ -200,7 +212,8 @@ def compute_raw_flows(config: CellposeFlowConfig) -> tuple[np.ndarray, np.ndarra
     # Ensure GPU memory is garbage collected
     cellpose_model.net.to("cpu")
     del cellpose_model
-    torch.cuda.empty_cache()
+    if config.device.type == "cuda":
+        torch.cuda.empty_cache()
 
     time_finish = datetime.now()
     vprint(f"Completed segmentation at {time_finish}", config.verbose)
@@ -211,7 +224,8 @@ def compute_raw_flows(config: CellposeFlowConfig) -> tuple[np.ndarray, np.ndarra
 
     # Free the flows tuple to release any GPU references
     del flows
-    torch.cuda.empty_cache()
+    if config.device.type == "cuda":
+        torch.cuda.empty_cache()
 
     return dP, cellprob
 
@@ -330,9 +344,7 @@ def postprocess_flows(
         )
 
     if config.decompose_flows:
-        dP = decompose_flow(
-            dP, config.decompose_flows_pad_fraction, torch.device("cuda")
-        )
+        dP = decompose_flow(dP, config.decompose_flows_pad_fraction, config.device)
 
     # Saving processed flows
     vprint("Saving processed flows", config.verbose)
@@ -440,8 +452,11 @@ class CellposeMaskConfig(BaseConfig):
         Maximum edge weight for a merge to be accepted. Default is 0.2.
     merge_contact_threshold : float, optional
         Minimum relative contact area for a merge to be accepted. Default 0.2.
-    device : str, optional
-        Torch device string for mask generation. Default is ``"cuda"``.
+    device : torch.device, optional
+        Torch device used for mask generation. Defaults to the best device
+        available on the current machine, as reported by
+        ``detect_torch_device``. Excluded from serialization so that a saved
+        config is re-detected rather than restored on a different machine.
     zarr_chunks : tuple[int] | None, optional
         Chunk shape for the output mask array. If None, inherits source chunks.
     """
@@ -460,19 +475,22 @@ class CellposeMaskConfig(BaseConfig):
     gaussian_edge_sigma: float = 2.0
     merge_weight_threshold: float = 0.2
     merge_contact_threshold: float = 0.2
-    device: str = "cuda"
+    device: torch.device = field(default_factory=detect_torch_device)
     zarr_chunks: tuple[int] | None = None
 
     min_size: int = field(init=False)
     spacing: list[int | float] = field(init=False)
     label_path: str = field(init=False)
 
+    EXCLUDED_JSON_FIELDS = set(["device"])
     EXCLUDED_PROCESSING_FIELDS = set(
-        ["root_path", "device", "zarr_chunks", "label_root", "label_path"]
+        ["root_path", "zarr_chunks", "label_root", "label_path"]
     )
 
     def __post_init__(self):
         """Derive ``spacing``, ``min_size``, ``zarr_chunks``, and ``label_path``."""
+        super().__post_init__()
+
         # Celculate min_size in pixel from min_diam in micrometers
         src_zarr = zarr.open_array(
             self.root_path / f"images/{self.spacing_dir}", mode="r"
@@ -517,8 +535,6 @@ def calculate_masks(config: CellposeMaskConfig) -> None:
         post-processing options.
     """
 
-    device = torch.device(config.device)
-
     root = zarr.open_group(config.root_path, mode="a")
     cellprob_zarr = root.get(f"{config.label_path}/flows/cellprob/{config.spacing_dir}")
     dp_zarr = root.get(f"{config.label_path}/flows/dP/{config.spacing_dir}")
@@ -536,7 +552,7 @@ def calculate_masks(config: CellposeMaskConfig) -> None:
         flow_threshold=config.flow_threshold,
         do_3D=do_3d,
         min_size=config.min_size,
-        device=device,
+        device=config.device,
     )
 
     # Post-process labels

@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, asdict, fields
 from typing import ClassVar, Self, Any
 import numpy as np
+import torch
 import dacite
 
 
@@ -23,6 +24,8 @@ class CustomJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
         elif isinstance(obj, Path):
+            return str(obj)
+        elif isinstance(obj, torch.device):
             return str(obj)
         return super().default(obj)
 
@@ -84,7 +87,8 @@ class BaseConfig:
     EXCLUDED_JSON_FIELDS : ClassVar[set[str]]
         Field names omitted from ``to_json`` / ``full_config``. Use this for
         fields that cannot be JSON-serialized at all (e.g. live ``zarr.Array``
-        handles or ``torch.device`` objects).
+        handles), and for ``torch.device`` fields, which are hardware-specific
+        and must be re-detected rather than restored from a saved config.
     EXCLUDED_PROCESSING_FIELDS : ClassVar[set[str]]
         Field names omitted from ``processing_metadata`` *in addition to*
         those in ``EXCLUDED_JSON_FIELDS``. Use this for fields that are
@@ -94,8 +98,8 @@ class BaseConfig:
     Notes
     -----
     Deserialization uses ``dacite`` with ``DACITE_CONFIG``, which applies
-    ``Path``, ``tuple``,``float``, and ``int`` type coercions so that configs survive a
-    JSON round-trip without losing type information.
+    ``Path``, ``tuple``,``float``, ``int``, and ``torch.device`` type coercions so that
+    configs survive a JSON round-trip without losing type information.
     """
 
     # Fields that cannot be serialized
@@ -108,15 +112,21 @@ class BaseConfig:
             tuple: _list_to_tuple,
             float: float,
             int: int,
+            torch.device: torch.device,
         },
         cast=[tuple],
     )
 
     def __post_init__(self):
-        """Coerce arguments to the correct type"""
+        """Coerce arguments to the correct type.
+
+        Fields declared ``field(init=False)`` are skipped when they have not
+        been assigned yet, so subclasses can safely call this via ``super()``
+        as the first statement of their own ``__post_init__``.
+        """
         hints = get_type_hints(type(self))
         for f in fields(self):
-            value = getattr(self, f.name)
+            value = getattr(self, f.name, None)
             if value is None:
                 continue
             target_type = hints.get(f.name)

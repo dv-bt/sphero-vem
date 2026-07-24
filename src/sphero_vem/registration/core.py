@@ -106,6 +106,11 @@ class RegistrationConfig(BaseConfig):
         Number of random restarts for the crop refinement. Default is 10.
     n_workers : int, optional
         Number of Dask threads for writing the output array. Default is 4.
+    device : torch.device, optional
+        Torch device used for the optimization. Defaults to the best device
+        available on the current machine, as reported by
+        ``detect_torch_device``. Excluded from serialization so that a saved
+        config is re-detected rather than restored on a different machine.
     """
 
     # Required input/output paths
@@ -141,9 +146,9 @@ class RegistrationConfig(BaseConfig):
     crop_stride: int = 20
     crop_restarts: int = 10
     n_workers: int = 4
+    device: torch.device = field(default_factory=detect_torch_device)
 
     # Derived values (initialized in __post_init__)
-    device: torch.device = field(init=False)
     src_zarr: zarr.Array = field(init=False)
     spacing: tuple[int, int, int] = field(init=False)
     dst_path: str = field(init=False)
@@ -163,7 +168,6 @@ class RegistrationConfig(BaseConfig):
         "n_workers",
         "zarr_chunks",
         "src_zarr",
-        "device",
         "spacing",
         "dst_path",
         "num_pairs",
@@ -175,7 +179,7 @@ class RegistrationConfig(BaseConfig):
         Opens ``src_zarr``, reads spacing, infers ``dst_path``, determines
         ``num_pairs``, and expands scalar pyramid parameters to per-level lists.
         """
-        self.device = detect_torch_device()
+        super().__post_init__()
 
         # Open source zarr array
         self.src_zarr = zarr.open_array(self.root_path / self.src_path, mode="r")
