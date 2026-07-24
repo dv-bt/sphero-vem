@@ -31,17 +31,22 @@ def main() -> None:
     # Define paths and variables
     gt_root = Path("data/processed/labeled/datasets_2d")
     seg_root = Path("data/processed/segmented/datasets_2d")
-    seg_target = "cells"
+    seg_targets = ["cells", "nuclei"]
     models = ["cpsam", "finetuned"]
 
     datasets = get_datasets(gt_root)
-    for dataset, model in tqdm(
-        product(datasets, models),
+    for dataset, model, seg_target in tqdm(
+        product(datasets, models, seg_targets),
         desc="Evaluating datasets",
-        total=len(datasets) * len(models),
+        total=len(datasets) * len(models) * len(seg_targets),
     ):
         seg_group_path = seg_root / f"{model}/{dataset.name}.zarr"
-        seg_arr_path = f"labels/{seg_target}/masks/{dataset.scale}"
+
+        # Force using cell segmentation for pretrained since there's no other target
+        if model == "cpsam":
+            seg_arr_path = f"labels/cells/masks/{dataset.scale}"
+        else:
+            seg_arr_path = f"labels/{seg_target}/masks/{dataset.scale}"
 
         # Guard against accidentally creating an array
         if not (seg_group_path / seg_arr_path).exists():
