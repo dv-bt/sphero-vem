@@ -11,6 +11,7 @@ import pandas as pd
 from tifffile import imread
 import zarr
 from cellpose.metrics import aggregated_jaccard_index, average_precision
+from sphero_vem.utils import dirname_from_spacing
 
 
 def calculate_ap(
@@ -57,32 +58,43 @@ def calculate_ap(
     return results_df
 
 
-def _slice_indexer(path: Path) -> tuple:
-    """Build a numpy indexer tuple for the stack slice matching a ground-truth file.
+def _to_index(vals: list[str]) -> int | slice:
+    """Return an int for a single value, a slice for a start/stop pair."""
+    return int(vals[0]) if len(vals) == 1 else slice(int(vals[0]), int(vals[1]))
 
-    Parses the axis letter (x/y/z) and slice index from the filename pattern
-    ``*-{axis}_{index}.tif`` and returns a 3-element indexing tuple where the
-    matching axis is an integer and the others are ``slice(None)``.
+
+def _slice_indexer(path: Path, ndim: int = 3) -> tuple[int | slice, ...]:
+    """Build a numpy indexer tuple for the raw-image region matching a label file.
+
+    Label TIFFs are crops or slices of a larger array stored as zarr, and encode
+    their position in the filename as components of the form ``-{axis}_{index}``
+    or ``-{axis}_{start}_{stop}``, e.g. ``sample-x_2600_3600-y_200_400-z_120.tif``.
+    An axis given a single value becomes an ``int`` and is dropped from the
+    indexed result; an axis given a start/stop pair becomes a ``slice`` and is
+    retained. Axes absent from the filename become ``slice(None)``, so a label
+    covering the full raw image needs no coordinates at all.
 
     Parameters
     ----------
     path : Path
-        Path to a ground-truth TIFF whose name encodes axis and index.
+        Path to a label TIFF whose name optionally encodes one or more axes.
+    ndim : int, default 3
+        Dimensionality of the array to be indexed, e.g. ``image.ndim``. Axis names
+        are taken from the trailing ``ndim`` characters of ``"zyx"``, i.e.
+        ``("y", "x")`` in 2D.
 
     Returns
     -------
-    tuple
-        3-element index tuple compatible with zarr/numpy advanced indexing.
+    tuple of int or slice
+        Index tuple of length ``ndim``, compatible with numpy/zarr basic indexing.
+        All-``slice(None)`` if the filename encodes no coordinates.
     """
-
-    axis_map = {"x": 2, "y": 1, "z": 0}
-
-    matches = re.search(r"-([xyz])_(\d+)", path.name)
-    axis = axis_map[matches.group(1)]
-    idx = int(matches.group(2))
-    indexer = tuple(idx if i == axis else slice(None) for i in range(3))
-
-    return indexer
+    axes = "zyx"[-ndim:]
+    axis_re = re.compile(r"-([xyz])((?:_\d+)+)")
+    coords = {
+        ax: _to_index(vals.split("_")[1:]) for ax, vals in axis_re.findall(path.name)
+    }
+    return tuple(coords.get(ax, slice(None)) for ax in axes)
 
 
 def _get_seg_target(array: zarr.Array) -> str:
@@ -132,7 +144,7 @@ def evaluate_segmentation(
     array_path : str
         Path to the mask array to analyse relative to `root_path`.
     out_dir : Path | None, optional
-        Optional destination path for the calculated metrics. Id specified, metrics
+        Optional destination path for the calculated metrics. If specified, metrics
         will be saved as `out_dir/segmentation-eval.parquet`, otherwise they will
         be saved as `tables/segmentation-eval.parquet` within the parent group of the
         mask array.
@@ -169,7 +181,7 @@ def evaluate_segmentation(
     preds = []
     for path in gt_paths:
         gt = imread(path)
-        pred = masks[_slice_indexer(path)]
+        pred = masks[_slice_indexer(path=path, ndim=gt.ndim)]
         assert gt.shape == pred.shape
 
         gts.append(gt)
@@ -193,7 +205,7 @@ def evaluate_segmentation(
             }
         )
         results_df: pd.DataFrame = results_df.merge(results_aji)
-        results_df["spacing"] = scale_dir
+        results_df["spacing"] = dirname_from_spacing(masks.attrs.get("spacing"))
 
     out_dir.mkdir(exist_ok=True, parents=True)
     save_path = out_dir / "segmentation-eval.parquet"
