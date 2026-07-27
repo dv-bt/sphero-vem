@@ -84,6 +84,7 @@ def downsample_posterior(
             dst_path=f"labels/nps/posterior/{dirname_from_spacing(dst_spacing)}",
             src_zarr=src_zarr,
             shape=final_shape,
+            spacing=dst_spacing,
             dtype="f2",
             processing={
                 "step": "downscaling",
