@@ -296,6 +296,7 @@ def save_regionprops(
     read_regionprops : Inverse operation.
     flatten_for_save : Underlying flattening logic.
     """
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
     props = flatten_for_save(props, sep=sep)
     props.to_parquet(dst_path, index=False)
 
