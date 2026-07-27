@@ -561,8 +561,9 @@ def label_nanoparticles(
     connectivity : int
         Connectivity used during labeling. Default is 2.
     min_size : int
-        Minimimum label size in voxels. Labels with size < min_size will be discarded.
-        Default is 10.
+        Minimum label size in voxels. Labels with size < min_size are discarded.
+        If min_size <= 1 the filtering and relabeling step is skipped entirely, as
+        connected-component labeling already yields contiguous IDs. Default is 10.
 
     Notes
     -----
@@ -583,7 +584,8 @@ def label_nanoparticles(
     # Label masks
     masks_filt = binary_closing(masks, radius=radius)
     masks_filt = ski_cpu.measure.label(masks_filt, connectivity=connectivity)
-    masks_filt = filter_and_relabel(masks_filt, min_size=min_size)
+    if min_size > 1:
+        masks_filt = filter_and_relabel(masks_filt, min_size=min_size)
 
     write_zarr(
         root,
