@@ -1,6 +1,6 @@
 [project]
 name = "sphero-vem"
-version = "0.1.1"
+version = "0.2.0"
 description = "Quantitative 3D analysis of volume electron microscopy data with ML and classical image processing"
 authors = [
     {name = "Davide Bottone",email = "d.bottone@pm.me"}
@@ -91,7 +91,7 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.bumpver]
-current_version = "0.1.1"
+current_version = "0.2.0"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "Bump version: {old_version} -> {new_version}"
 tag_message = "{new_version}"

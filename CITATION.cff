@@ -5,5 +5,5 @@ authors:
   given-names: "Davide"
   orcid: "https://orcid.org/0000-0002-6133-5088"
 title: "sphero-vem"
-version: 0.1.1
+version: 0.2.0
 url: "https://github.com/dv-bt/sphero-vem"
