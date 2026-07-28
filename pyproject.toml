@@ -104,6 +104,5 @@ push = true
     'version = "{version}"',
 ]
 "CITATION.cff" = [
-    'version: {version}',
-    'date-released: {YYYY}-{0M}-{0D}',
+    '^version: {version}',
 ]
