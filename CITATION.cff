@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Bottone"
+  given-names: "Davide"
+  orcid: "https://orcid.org/0000-0002-6133-5088"
+title: "sphero-vem"
+version: 0.1.1
+date-released: 2026-05-07
+url: "https://github.com/dv-bt/sphero-vem"
