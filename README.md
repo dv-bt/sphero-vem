@@ -5,6 +5,7 @@
 [![CI](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml/badge.svg)](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/dv-bt/sphero-vem/graph/badge.svg?token=0VqxCn7LKp)](https://codecov.io/gh/dv-bt/sphero-vem)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![DOI](https://zenodo.org/badge/954559307.svg)](https://doi.org/10.5281/zenodo.21643349)
 
 Python library for quantitative analysis of volumetric electron microscopy (vEM) data.
 
