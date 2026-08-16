@@ -75,6 +75,7 @@ optional = true
 
 [tool.poetry.group.napari.dependencies]
 napari = {extras = ["pyqt6"], version = "^0.6.6"}
+napari-animation = "^0.0.10"
 
 [tool.poetry.group.notebook]
 optional = true

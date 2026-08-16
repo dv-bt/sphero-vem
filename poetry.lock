@@ -2240,6 +2240,23 @@ test = ["fsspec[github]", "pytest", "pytest-cov"]
 tifffile = ["tifffile"]
 
 [[package]]
+name = "imageio-ffmpeg"
+version = "0.6.0"
+description = "FFMPEG wrapper for Python"
+optional = false
+python-versions = ">=3.9"
+groups = ["napari"]
+files = [
+    {file = "imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl", hash = "sha256:9d2baaf867088508d4a3458e61eeb30e945c4ad8016025545f66c4b5aaef0a61"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:1d47bebd83d2c5fc770720d211855f208af8a596c82d17730aa51e815cdee6dc"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-win32.whl", hash = "sha256:196faa79366b4a82f95c0f4053191d2013f4714a715780f0ad2a68ff37483cc2"},
+    {file = "imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", hash = "sha256:02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a"},
+    {file = "imageio_ffmpeg-0.6.0.tar.gz", hash = "sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755"},
+]
+
+[[package]]
 name = "imagesize"
 version = "2.0.0"
 description = "Get image size from headers (BMP/PNG/JPEG/JPEG2000/GIF/TIFF/SVG/Netpbm/WebP/AVIF/HEIC/HEIF)"
@@ -3437,6 +3454,29 @@ qt = ["napari[pyqt]"]
 release = ["PyGithub (>=1.46)", "gitpython (>=3.1.0)", "requests-cache (>=0.9.2)", "twine (>=3.1.1)"]
 testing = ["IPython (>=7.25.0)", "babel (>=2.9.0)", "coverage (>7)", "docstring_parser (>=0.15)", "fsspec (>=2023.10.0)", "hypothesis (>=6.8.0)", "lxml[html-clean] (>5)", "matplotlib (>=3.6.1)", "napari[gallery]", "napari[optional-base]", "pooch (>=1.6.0)", "pretend (>=1.0.9)", "pyautogui (>=0.9.54)", "pytest (>=8.3.5)", "pytest-pretty (>=1.1.0)", "pytest-qt (==4.4.0) ; python_version <= \"3.10\"", "pytest-qt (>=4.4.0) ; python_version > \"3.10\"", "pytest-rerunfailures (>=15.1)", "qtconsole (>=4.5.1)", "rich (>=12.0.0)", "tensorstore (>=0.1.32)", "virtualenv (>=20.17)", "xarray (>=0.16.2)"]
 testing-extra = ["torch (>=1.10.2)"]
+
+[[package]]
+name = "napari-animation"
+version = "0.0.10"
+description = "A plugin for making animations in napari"
+optional = false
+python-versions = ">=3.10"
+groups = ["napari"]
+files = [
+    {file = "napari_animation-0.0.10-py3-none-any.whl", hash = "sha256:4caf663226b5b5759125dcaa8056080ab7022d67eb2b11ed84008ba11bedeca6"},
+    {file = "napari_animation-0.0.10.tar.gz", hash = "sha256:ce5970f50afd15bb81d7a296ba864c04b1747ce7323994563c3fff38ac318168"},
+]
+
+[package.dependencies]
+imageio = "*"
+imageio-ffmpeg = "*"
+napari = ">=0.5"
+npe2 = "*"
+numpy = "*"
+qtpy = "*"
+scipy = "*"
+superqt = "*"
+tqdm = ">=4.56.0"
 
 [[package]]
 name = "napari-console"
@@ -7515,4 +7555,4 @@ cuda = ["cucim-cu12", "cupy-cuda12x"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "b78986e7ce61f71d8f54c05a64dbb4f9ede77332ccb1932bf10eb6b140cb9814"
+content-hash = "9da5a46d76c3b6bd452116e7f52a413351333789f8605d31f4da2346c0092133"
