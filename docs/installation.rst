@@ -4,12 +4,12 @@ Installation
 Requirements
 ------------
 
-- Python 3.12–3.13
+- Python 3.12–3.14
 - `PyTorch <https://pytorch.org/>`_ ≥ 2.0
 - `NumPy <https://numpy.org/>`_ ≥ 2.0
 - `zarr <https://zarr.readthedocs.io/>`_ ≥ 3.0
 - `Cellpose <https://cellpose.readthedocs.io/>`_ ≥ 4.0
-- `CAREamics <https://careamics.github.io/>`_ ≥ 0.0.9
+- `CAREamics <https://careamics.github.io/>`_ ≥ 0.0.9, < 0.2
 
 PyPI install
 ------------
