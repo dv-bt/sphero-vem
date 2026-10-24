@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the Python version to install
-PYTHON_VERSION="3.12.8"
+PYTHON_VERSION="3.14.9"
 
 # Install specified Python version
 echo "Installing Python $PYTHON_VERSION if needed..."

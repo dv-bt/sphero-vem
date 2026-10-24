@@ -1,7 +1,7 @@
 # sphero-vem
 
 [![PyPI](https://img.shields.io/pypi/v/sphero-vem)](https://pypi.org/project/sphero-vem/)
-[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)](https://www.python.org)
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org)
 [![CI](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml/badge.svg)](https://github.com/dv-bt/sphero-vem/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/dv-bt/sphero-vem/graph/badge.svg?token=0VqxCn7LKp)](https://codecov.io/gh/dv-bt/sphero-vem)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -63,12 +63,12 @@ Full documentation is available on the [official website](https://dv-bt.github.i
 
 ## Requirements
 
-- Python 3.12–3.13
+- Python 3.12–3.14
 - [PyTorch](https://pytorch.org/) ≥ 2.0
 - [NumPy](https://numpy.org/) ≥ 2.0
 - [zarr](https://zarr.readthedocs.io/) ≥ 3.0
 - [Cellpose](https://cellpose.readthedocs.io/) ≥ 4.0
-- [CAREamics](https://careamics.github.io/) ≥ 0.0.9
+- [CAREamics](https://careamics.github.io/) ≥ 0.0.9, < 0.2
 
 ## Dataset and model weights
 
